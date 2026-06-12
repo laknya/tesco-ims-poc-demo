@@ -1,0 +1,10 @@
+{
+  "version": "1.0.0",
+  "type_name": "TescoIMS::SharedServices::S3Bucket",
+  "released": "2026-06-12",
+  "template_hash": "sha256:aacf2a33812b763e7ef1a2e23c42852588c976d77451764903e6ae3efa388a20",
+  "status": "default",
+  "breaking_changes": [],
+  "changelog": "Initial release. Replaces per-account s3-template.yaml copies. Bucket policy principals (BucketAdminArn, BucketWriterArn) externalized as JSON config parameters.",
+  "cfn_registry_note": "In production: register as private module via 'aws cloudformation register-type --type MODULE --type-name TescoIMS::SharedServices::S3Bucket'."
+}

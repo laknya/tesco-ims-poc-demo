@@ -1,0 +1,6 @@
+{
+  "AccountId":   "999888777666",
+  "Environment": "dev",
+  "VpcCidr":     "10.99.0.0/16",
+  "VpcName":     "sandbox-vpc"
+}

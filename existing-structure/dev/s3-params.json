@@ -1,0 +1,15 @@
+[
+  { "ParameterKey": "AccountId",              "ParameterValue": "641079926471" },
+  { "ParameterKey": "Environment",            "ParameterValue": "dev" },
+  { "ParameterKey": "BucketName",             "ParameterValue": "tesco-ims-platform-641079926471-dev" },
+  { "ParameterKey": "KmsKeyArn",              "ParameterValue": "arn:aws:kms:eu-west-1:641079926471:alias/tesco-ims-dev" },
+  { "ParameterKey": "BucketAdminArn",         "ParameterValue": "arn:aws:iam::641079926471:root" },
+  { "ParameterKey": "BucketWriterArn",        "ParameterValue": "arn:aws:iam::641079926471:role/github-actions-deploy" },
+  { "ParameterKey": "EnableVersioning",       "ParameterValue": "Enabled" },
+  { "ParameterKey": "LifecycleRetentionDays", "ParameterValue": "90" },
+  { "ParameterKey": "EnableKmsEncryption",    "ParameterValue": "true" },
+  { "ParameterKey": "EnableAccessLogging",    "ParameterValue": "false" },
+  { "ParameterKey": "CostCentre",             "ParameterValue": "TESCO-IMS-PLATFORM" },
+  { "ParameterKey": "ManagedBy",              "ParameterValue": "github-actions" },
+  { "ParameterKey": "VpcStackName",           "ParameterValue": "poc-EXISTING-networking-vpc-baseline-dev" }
+]

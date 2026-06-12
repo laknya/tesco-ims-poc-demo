@@ -1,0 +1,113 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  DEV KMS Key — Development Account
+  ──────────────────────────────────────────────────────────────────────
+  THIS IS THE OLD STRUCTURE.
+  This file is one of 68 nearly-identical copies in the repository:
+    dev/kms-template.yaml           ← YOU ARE HERE
+    coll-dev/kms-template.yaml      ← identical structure, different defaults
+    coll-ppe/kms-template.yaml      ← identical structure, different defaults
+    ... (65 more copies)
+
+  Problem: Change an allowed principal → edit 68 files.
+           Add a new role to key policy → touch 68 templates.
+  ──────────────────────────────────────────────────────────────────────
+
+Parameters:
+  AccountId:
+    Type: String
+    Default: "641079926471"        # hardcoded per file
+
+  Environment:
+    Type: String
+    Default: "dev"                 # hardcoded per file
+
+  KeyDescription:
+    Type: String
+    Default: "TESCO IMS Platform Key - DEV"  # hardcoded per file
+
+  DeletionWindowInDays:
+    Type: Number
+    Default: 30                    # duplicated in all 68 files
+
+  EnableKeyRotation:
+    Type: String
+    Default: "true"                # duplicated in all 68 files
+
+  # ── Policy principals ─────────────────────────────────────────────────
+  # THESE ARE HARDCODED here. In the new structure they live in JSON config.
+  KeyAdminArn:
+    Type: String
+    Default: "arn:aws:iam::641079926471:root"  # hardcoded AccountId
+
+  KeyUsageArn:
+    Type: String
+    Default: "arn:aws:iam::641079926471:role/github-actions-deploy"  # hardcoded
+
+  # ── Governance ───────────────────────────────────────────────────────
+  CostCentre:
+    Type: String
+    Default: "TESCO-IMS-PLATFORM"  # duplicated in all 68 files
+
+  ManagedBy:
+    Type: String
+    Default: "github-actions"      # duplicated in all 68 files
+
+Resources:
+  KMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Ref KeyDescription
+      EnableKeyRotation: !Ref EnableKeyRotation
+      PendingWindowInDays: !Ref DeletionWindowInDays
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnableRootAdmin
+            Effect: Allow
+            Principal:
+              AWS: !Ref KeyAdminArn
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: AllowPlatformUsage
+            Effect: Allow
+            Principal:
+              AWS: !Ref KeyUsageArn
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+              - kms:DescribeKey
+            Resource: '*'
+      Tags:
+        - Key: Name
+          Value: !Sub "tesco-ims-${Environment}-platform-key"
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCentre
+          Value: !Ref CostCentre
+        - Key: ManagedBy
+          Value: !Ref ManagedBy
+        - Key: AccountId
+          Value: !Ref AccountId
+
+  KMSAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub "alias/tesco-ims-${Environment}-platform"
+      TargetKeyId: !Ref KMSKey
+
+Outputs:
+  KMSKeyId:
+    Value: !Ref KMSKey
+    Export:
+      Name: !Sub "${AWS::StackName}-KeyId"
+  KMSKeyArn:
+    Value: !GetAtt KMSKey.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-KeyArn"
+  KMSAliasName:
+    Value: !Ref KMSAlias
+    Export:
+      Name: !Sub "${AWS::StackName}-AliasName"

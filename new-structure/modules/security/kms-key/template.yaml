@@ -1,0 +1,117 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  TESCO IMS - KMS Key Baseline (MASTER TEMPLATE)
+  ──────────────────────────────────────────────────────────────────────
+  ONE file. Deployed to ALL accounts via parameters.
+  Replaces: existing-structure/dev/kms-template.yaml
+            existing-structure/coll-dev/kms-template.yaml
+            ... (66 more per-account copies)
+
+  Key policy principals come from the 4-layer JSON config system.
+  Security team owns:  config/accounts/{account}/security/kms-key.json
+  Platform team owns:  this template (unchanged across accounts)
+  ──────────────────────────────────────────────────────────────────────
+
+Parameters:
+  # --- Account Identity ---
+  AccountId:
+    Type: String
+    Description: 12-digit AWS Account ID
+    AllowedPattern: "^[0-9]{12}$"
+
+  Environment:
+    Type: String
+    AllowedValues: [dev, ppe, tst, prod]
+
+  # --- Key Configuration ---
+  KeyDescription:
+    Type: String
+
+  DeletionWindowInDays:
+    Type: Number
+    Default: 30
+
+  EnableKeyRotation:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+
+  # --- Policy: Who can administer and use this key ---
+  # These are JSON parameters — sourced from config/accounts/{account}/security/kms-key.json
+  # Security team PRs against kms-key.json to change policy.
+  # Platform team PRs against this template to change key behaviour.
+  KeyAdminArn:
+    Type: String
+    Description: ARN of the principal with full key admin (kms:*)
+
+  KeyUsageArn:
+    Type: String
+    Description: ARN of the principal allowed to Encrypt/Decrypt/GenerateDataKey
+
+  # --- Governance ---
+  CostCentre:
+    Type: String
+    Default: "TESCO-IMS-PLATFORM"
+
+  ManagedBy:
+    Type: String
+    Default: "github-actions"
+
+Resources:
+  KMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Ref KeyDescription
+      EnableKeyRotation: !Ref EnableKeyRotation
+      PendingWindowInDays: !Ref DeletionWindowInDays
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnableRootAdmin
+            Effect: Allow
+            Principal:
+              AWS: !Ref KeyAdminArn
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: AllowPlatformUsage
+            Effect: Allow
+            Principal:
+              AWS: !Ref KeyUsageArn
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+              - kms:DescribeKey
+            Resource: '*'
+      Tags:
+        - Key: Name
+          Value: !Sub "tesco-ims-${Environment}-platform-key"
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCentre
+          Value: !Ref CostCentre
+        - Key: ManagedBy
+          Value: !Ref ManagedBy
+        - Key: AccountId
+          Value: !Ref AccountId
+
+  KMSAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub "alias/tesco-ims-${Environment}-platform"
+      TargetKeyId: !Ref KMSKey
+
+Outputs:
+  KMSKeyId:
+    Value: !Ref KMSKey
+    Export:
+      Name: !Sub "${AWS::StackName}-KeyId"
+  KMSKeyArn:
+    Value: !GetAtt KMSKey.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-KeyArn"
+  KMSAliasName:
+    Value: !Ref KMSAlias
+    Export:
+      Name: !Sub "${AWS::StackName}-AliasName"

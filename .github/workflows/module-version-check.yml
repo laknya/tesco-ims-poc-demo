@@ -1,0 +1,158 @@
+name: Module Version Check
+
+# Runs on every PR that touches any module template, version.json, or account config.
+# Blocks merge if a template.yaml was changed without bumping version.json.
+#
+# This mirrors the AWS CloudFormation Registry constraint:
+#   "You cannot overwrite an existing version — you must register a new version."
+#   Each template change = a new module version (major.minor.patch).
+#
+# See: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/module-versioning.html
+
+on:
+  pull_request:
+    paths:
+      - 'new-structure/modules/**'
+      - 'new-structure/config/**'   # config changes also trigger schema validation
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+
+  version-integrity:
+    name: Version Integrity Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history needed for git diff against base
+
+      - name: Install dependencies
+        run: pip install pyyaml   # resolve_parameters.py (used by validate_schema.py in poc-pipeline.yml) needs this; harmless here
+
+      - name: Detect changed modules
+        id: changed
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+          echo "Comparing $BASE → $HEAD"
+
+          # List every module template that changed
+          CHANGED_TEMPLATES=$(git diff --name-only "$BASE" "$HEAD" \
+            | grep "^new-structure/modules/.*/template.yaml$" || true)
+
+          # Bug fix: properly closed ${...} substitution
+          echo "Changed templates: ${CHANGED_TEMPLATES:-(none)}"
+
+          MISSING_BUMPS=""
+          while IFS= read -r tmpl; do
+            [ -z "$tmpl" ] && continue
+            dir=$(dirname "$tmpl")
+            vf="${dir}/version.json"
+            if ! git diff --name-only "$BASE" "$HEAD" | grep -Fq "${vf}"; then
+              MISSING_BUMPS="${MISSING_BUMPS}${tmpl}\n"
+              echo "  ❌ $tmpl changed — ${vf} NOT bumped"
+            else
+              echo "  ✅ $tmpl changed — ${vf} bumped ✓"
+            fi
+          done <<< "$CHANGED_TEMPLATES"
+
+          if [ -n "$MISSING_BUMPS" ]; then
+            echo "missing_bumps=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "missing_bumps=false" >> "$GITHUB_OUTPUT"
+          fi
+          # Write multiline output safely using heredoc
+          echo "missing_bumps_list<<EOF" >> "$GITHUB_OUTPUT"
+          printf "%b" "$MISSING_BUMPS" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Verify template hash integrity
+        run: python3 new-structure/pipeline/check_module_versions.py
+
+      - name: List current module versions (registry snapshot)
+        run: python3 new-structure/pipeline/check_module_versions.py --list
+
+      - name: Validate account configs against module schemas
+        run: python3 new-structure/pipeline/validate_schema.py
+
+      - name: Generate version manifest
+        run: python3 new-structure/pipeline/generate_version_manifest.py
+
+      - name: Read version manifest for PR comment
+        id: manifest
+        run: |
+          # Build a markdown table row per module from the live manifest
+          TABLE=$(python3 -c "
+          import json
+          data = json.load(open('new-structure/config/generated/version-manifest.json'))
+          rows = []
+          for mk, mv in data['modules'].items():
+              accounts = ', '.join(mv['deployed_to']) or '(none)'
+              rows.append(f'| \`{mk}\` | \`{mv[\"type_name\"]}\` | v{mv[\"version\"]} | {mv[\"status\"]} | {accounts} |')
+          print('\n'.join(rows))
+          ")
+          echo "table<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$TABLE" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Post PR comment — version check result
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const missingBumps = '${{ steps.changed.outputs.missing_bumps }}' === 'true';
+            // Safe: use toJSON to avoid injection from file paths containing backticks or ${}
+            const missingListRaw = ${{ toJSON(steps.changed.outputs.missing_bumps_list) }};
+            const manifestTable  = ${{ toJSON(steps.manifest.outputs.table) }};
+            const jobStatus      = '${{ job.status }}';
+            const icon           = (jobStatus === 'success' && !missingBumps) ? '✅' : '❌';
+
+            let body = `## Module Version Check ${icon}\n\n`;
+
+            if (missingBumps) {
+              body += `### ❌ Version bump required\n\n`;
+              body += `The following modules had \`template.yaml\` changes without a matching \`version.json\` bump:\n\n`;
+              (missingListRaw || '').trim().split('\n').filter(Boolean).forEach(t => {
+                body += `- \`${t}\`\n`;
+              });
+              body += `\n**To fix:**\n`;
+              body += `1. Edit \`version.json\` next to each changed template: increment \`version\`, update \`changelog\`\n`;
+              body += `2. Run: \`python3 new-structure/pipeline/check_module_versions.py --update\`\n`;
+              body += `3. Commit \`version.json\` alongside your \`template.yaml\` changes\n\n`;
+              body += `**Why?** The CFN Registry does not allow overwriting an existing version.\n`;
+              body += `Each template change must be registered as a new version:\n`;
+              body += `\`\`\`bash\n`;
+              body += `aws cloudformation register-type \\\n`;
+              body += `  --type MODULE --type-name TescoIMS::Networking::VpcBaseline \\\n`;
+              body += `  --schema-handler-package s3://tesco-ims-cfn-modules/vpc-baseline-v<NEW>.zip\n`;
+              body += `\`\`\`\n`;
+            } else {
+              body += `### ✅ All module versions in sync\n\n`;
+              body += `Every changed \`template.yaml\` has a matching \`version.json\` bump.\n\n`;
+            }
+
+            body += `### Module Registry Snapshot\n\n`;
+            body += `| Module | Type Name | Version | Status | Accounts |\n`;
+            body += `|--------|-----------|---------|--------|----------|\n`;
+            body += (manifestTable || '') + '\n\n';
+
+            body += `> **CFN Registry note:** Changing the default version does not trigger existing stack updates.\n`;
+            body += `> The next \`aws cloudformation deploy\` for each account picks up the new default version.\n`;
+            body += `> To guarantee uniform results across accounts, set the same default version before running deployments.\n`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });
+
+      - name: Fail if version bumps missing
+        if: steps.changed.outputs.missing_bumps == 'true'
+        run: |
+          echo "❌ PR blocked: template changes found without version.json bumps."
+          echo "   See the PR comment for remediation steps."
+          exit 1

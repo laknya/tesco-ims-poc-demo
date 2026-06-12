@@ -1,0 +1,6 @@
+{
+  "AccountId":   "641079926471",
+  "Environment": "dev",
+  "VpcCidr":     "10.0.0.0/16",
+  "VpcName":     "dev-vpc"
+}

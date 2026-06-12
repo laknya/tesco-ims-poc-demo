@@ -1,57 +1,81 @@
 #!/bin/bash
-# Stage 5: Full rollback — restore old stacks in under 5 minutes
-# Repo: git@github.com:laknya/tesco-ims-poc-demo.git
+# Stage 5 — Full rollback: restore all EXISTING stacks, remove all NEW stacks.
+# Auto-discovers modules — no module names hardcoded.
 set -e
 
-ENV=${1:-dev}
+ACCOUNT=${1:-dev}
 REGION="eu-west-1"
+
+# shellcheck source=scripts/lib/stack-names.sh
+source "$(dirname "$0")/lib/stack-names.sh"
 
 echo ""
 echo "╔══════════════════════════════════════════════════════╗"
-echo "║  STAGE 5 — ROLLBACK (env: ${ENV})                    "
+echo "║  STAGE 5 — ROLLBACK (${ACCOUNT})                     "
 echo "╚══════════════════════════════════════════════════════╝"
 echo ""
-read -p "Type ROLLBACK to confirm full restore: " CONFIRM
-[ "${CONFIRM}" = "ROLLBACK" ] || { echo "Rollback cancelled."; exit 0; }
+
+# In CI the environment gate + typed workflow_dispatch input substitutes.
+if [ "${CI}" = "true" ]; then
+  echo "  Running in CI — environment gate approval + workflow_dispatch input"
+  echo "  'ROLLBACK' substitutes for interactive confirmation."
+else
+  read -r -p "Type ROLLBACK to confirm full restore: " CONFIRM
+  [ "${CONFIRM}" = "ROLLBACK" ] || { echo "Rollback cancelled."; exit 0; }
+fi
 
 START=$(date +%s)
 
+# ── Restore EXISTING stacks from per-account templates ────────────────
 echo ""
-echo "► Restoring VPC stack..."
-aws cloudformation deploy \
-  --stack-name  "poc-OLD-vpc-${ENV}" \
-  --template-file old-structure/cloudformation/vpc-template.yaml \
-  --parameter-overrides file://old-structure/parameters/${ENV}/vpc.json \
-  --tags POCStage=rollback Environment=${ENV} \
-  --region "${REGION}"
+echo "Restoring EXISTING stacks from per-account templates..."
+while IFS= read -r domain_module; do
+  DOMAIN="${domain_module%/*}"; MODULE="${domain_module#*/}"
 
+  ABBREV=$(_abbrev_for_module "${domain_module}")
+
+  TEMPLATE="existing-structure/${ACCOUNT}/${ABBREV}-template.yaml"
+  PARAMS="existing-structure/${ACCOUNT}/${ABBREV}-params.json"
+  STACK=$(cfn_stack_name "EXISTING" "${DOMAIN}" "${MODULE}" "${ACCOUNT}")
+
+  EXTRA_CAPS=""
+  [[ "${ABBREV}" == "kms" ]] && EXTRA_CAPS="--capabilities CAPABILITY_NAMED_IAM"
+
+  echo "► Restoring ${STACK}..."
+  # shellcheck disable=SC2086
+  aws cloudformation deploy \
+    --stack-name  "${STACK}" \
+    --template-file "${TEMPLATE}" \
+    --parameter-overrides "file://${PARAMS}" \
+    --tags POCStage=rollback Account="${ACCOUNT}" \
+           Domain="${DOMAIN}" Module="${MODULE}" \
+    --region "${REGION}" \
+    --no-fail-on-empty-changeset \
+    ${EXTRA_CAPS}
+  echo "  ✅ Restored: ${STACK}"
+
+done < <(discover_existing_modules "${ACCOUNT}")
+
+# ── Remove NEW stacks (in reverse order for safe dependency) ──────────
 echo ""
-echo "► Restoring Subnets stack..."
-TMP=$(mktemp)
-python3 -c "
-import json
-params = json.load(open('old-structure/parameters/${ENV}/subnets.json'))
-for p in params:
-    if p['ParameterKey'] == 'VpcStackName':
-        p['ParameterValue'] = 'poc-OLD-vpc-${ENV}'
-print(json.dumps(params, indent=2))
-" > "$TMP"
-
-aws cloudformation deploy \
-  --stack-name  "poc-OLD-subnets-${ENV}" \
-  --template-file old-structure/cloudformation/subnets-template.yaml \
-  --parameter-overrides file://"$TMP" \
-  --tags POCStage=rollback Environment=${ENV} \
-  --region "${REGION}"
-
-echo ""
-echo "► Removing new stack..."
-aws cloudformation delete-stack \
-  --stack-name "poc-NEW-vpc-subnets-${ENV}" --region "${REGION}"
-aws cloudformation wait stack-delete-complete \
-  --stack-name "poc-NEW-vpc-subnets-${ENV}" --region "${REGION}"
+echo "Removing NEW stacks..."
+while IFS= read -r domain_module; do
+  DOMAIN="${domain_module%/*}"; MODULE="${domain_module#*/}"
+  STACK=$(cfn_stack_name "NEW" "${DOMAIN}" "${MODULE}" "${ACCOUNT}")
+  echo "► Deleting ${STACK}..."
+  aws cloudformation delete-stack \
+    --stack-name "${STACK}" --region "${REGION}"
+  aws cloudformation wait stack-delete-complete \
+    --stack-name "${STACK}" --region "${REGION}"
+  echo "  Done."
+done < <(discover_new_modules "${ACCOUNT}" | tac)
 
 END=$(date +%s)
 echo ""
-echo "✅  ROLLBACK COMPLETE in $(( END - START ))s"
-echo "    Old stacks restored. New stack removed."
+echo "╔══════════════════════════════════════════════════════╗"
+echo "║  ✅  ROLLBACK COMPLETE in $(( END - START ))s         "
+echo "║                                                      "
+echo "║  All EXISTING stacks restored.                       "
+echo "║  All NEW stacks removed.                             "
+echo "║  Deployment back to: existing-structure/${ACCOUNT}/  "
+echo "╚══════════════════════════════════════════════════════╝"

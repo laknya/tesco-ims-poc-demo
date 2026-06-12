@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "vpc-baseline parameters",
+  "description": "Parameter contract for the vpc-baseline master template",
+  "type": "object",
+  "required": ["AccountId", "Environment", "VpcCidr", "VpcName",
+               "PublicSubnetACidr", "PublicSubnetBCidr",
+               "PrivateSubnetACidr", "PrivateSubnetBCidr"],
+  "properties": {
+    "AccountId": {
+      "type": "string",
+      "pattern": "^[0-9]{12}$",
+      "description": "12-digit AWS account ID"
+    },
+    "Environment": {
+      "type": "string",
+      "enum": ["dev", "ppe", "tst", "prod"]
+    },
+    "VpcCidr": {
+      "type": "string",
+      "pattern": "^[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}/[0-9]{1,2}$"
+    },
+    "VpcName": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 64
+    },
+    "EnableDnsHostnames": {
+      "type": "string",
+      "enum": ["true", "false"]
+    },
+    "EnableDnsSupport": {
+      "type": "string",
+      "enum": ["true", "false"]
+    },
+    "PublicSubnetACidr":  { "type": "string" },
+    "PublicSubnetBCidr":  { "type": "string" },
+    "PrivateSubnetACidr": { "type": "string" },
+    "PrivateSubnetBCidr": { "type": "string" },
+    "CostCentre": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ManagedBy": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

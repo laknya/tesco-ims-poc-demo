@@ -1,6 +1,0 @@
-{
-  "EnableDnsHostnames": "true",
-  "EnableDnsSupport":   "true",
-  "CostCentre":         "TESCO-IMS-PLATFORM",
-  "ManagedBy":          "github-actions"
-}

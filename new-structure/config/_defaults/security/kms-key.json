@@ -1,0 +1,6 @@
+{
+  "DeletionWindowInDays": "30",
+  "EnableKeyRotation":    "true",
+  "CostCentre":           "TESCO-IMS-PLATFORM",
+  "ManagedBy":            "github-actions"
+}

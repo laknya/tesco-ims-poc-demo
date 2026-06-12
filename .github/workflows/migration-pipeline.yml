@@ -1,0 +1,317 @@
+name: TESCO IMS Migration Pipeline
+
+# ── Delta deployment architecture ─────────────────────────────────────────────
+#
+#  Every push/PR runs validation (no AWS). On main:
+#
+#  validate
+#    └─► detect-changes          (no AWS — computes deploy matrix from git diff)
+#          └─► [GATE: tesco-ims-deploy-existing]
+#                └─► deploy-existing  (full: existing stacks are always idempotent)
+#                      └─► [GATE: tesco-ims-deploy-new]
+#                            └─► deploy-new  (MATRIX — only changed modules)
+#                                  └─► [GATE: tesco-ims-parity-check]
+#                                        └─► parity-check  (MATRIX — same changed modules)
+#
+#  Delta logic (detect-changes):
+#    modules/{domain}/{module}/template.yaml  → all accounts using that module
+#    config/_defaults/{domain}/{module}.json  → all accounts using that module
+#    config/environments/{env}/…              → accounts with that environment
+#    config/ous/{ou}/…                        → accounts with that OU prefix
+#    config/accounts/{account}/…              → only that account
+#
+#  workflow_dispatch override:
+#    deploy_mode=full  → bypass delta detection, deploy all modules
+#    deploy_mode=delta → same as automatic (default)
+#
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy_mode:
+        description: "'delta' deploys only changed modules; 'full' deploys everything"
+        required: true
+        default: delta
+        type: choice
+        options: [delta, full]
+      account:
+        description: "Target account (leave blank for all accounts in registry)"
+        required: false
+        default: dev
+
+env:
+  AWS_REGION: eu-west-1
+  DEMO_ACCOUNT: dev
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+  deployments: write   # required for GitHub Environments gate status reporting
+
+jobs:
+
+  # ──────────────────────────────────────────────────────────────────────
+  # JOB 1: Validate — runs on every PR and every push (no AWS)
+  # ──────────────────────────────────────────────────────────────────────
+  validate:
+    name: 01 Validate (no AWS)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: pip install cfn-lint boto3 pyyaml pytest pytest-timeout jsonschema
+
+      - name: Run unit + integration tests (no AWS)
+        run: pytest tests/ -m "not aws" --tb=short -q
+
+      - name: Lint existing-structure templates (illustrates the duplication problem)
+        run: |
+          cfn-lint existing-structure/dev/vpc-template.yaml
+          cfn-lint existing-structure/dev/kms-template.yaml
+          cfn-lint existing-structure/dev/s3-template.yaml
+
+      - name: Lint new master templates (one file replaces all per-account copies)
+        run: |
+          find new-structure/modules -name "template.yaml" | sort | while IFS= read -r t; do
+            cfn-lint "$t" && echo "  ✅ $t"
+          done
+
+      - name: Validate all JSON parameter files
+        run: |
+          find . -name "*.json" \
+            -not -path "./.git/*" \
+            -not -path "./new-structure/config/generated/*" | while IFS= read -r f; do
+            python3 -c "import json; json.load(open('$f'))" \
+              && echo "  ✅ $f" || { echo "  ❌ $f"; exit 1; }
+          done
+
+      - name: Check module version integrity (template hash vs version.json)
+        run: python3 new-structure/pipeline/check_module_versions.py
+
+      - name: Validate account configs against module schemas
+        run: python3 new-structure/pipeline/validate_schema.py
+
+      - name: Test resolver for all modules — dev account
+        run: |
+          find new-structure/config/accounts/dev -name "*.json" | sort | \
+          while IFS= read -r cfg; do
+            rel="${cfg#new-structure/config/accounts/dev/}"
+            domain="${rel%/*}"
+            module="${rel%.json}"; module="${module##*/}"
+            echo "Resolving dev/${domain}/${module}..."
+            python3 new-structure/pipeline/resolve_parameters.py \
+              --account dev --domain "${domain}" --module "${module}" \
+              --output "/tmp/resolved-dev-${domain}-${module}.json"
+          done
+
+      - name: Generate version manifest
+        run: |
+          python3 new-structure/pipeline/generate_version_manifest.py
+          cat new-structure/config/generated/version-manifest.json
+
+      - name: Test registry generator
+        run: |
+          python3 new-structure/pipeline/generate_account_params.py
+          echo "Generated files:"; ls new-structure/config/generated/account-metadata/
+
+      - name: Post validation summary to PR
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const status = '${{ job.status }}';
+            const icon = status === 'success' ? '✅' : '❌';
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## TESCO IMS POC — Validation ${icon}\n` +
+                `**Status:** ${status}\n\n` +
+                `**Checks completed:**\n` +
+                `- cfn-lint: existing-structure (VPC + KMS + S3) ${icon}\n` +
+                `- cfn-lint: all new master templates ${icon}\n` +
+                `- JSON param validation: all files ${icon}\n` +
+                `- Parameter resolver: all dev modules ${icon}\n` +
+                `- Module version integrity (hash check) ${icon}\n` +
+                `- Schema validation (account configs) ${icon}\n` +
+                `- Version manifest generated ${icon}\n` +
+                `- Registry generator ${icon}\n\n` +
+                `*No AWS resources were created.*`
+            });
+
+  # ──────────────────────────────────────────────────────────────────────
+  # JOB 2: Detect changes — determines which modules need redeployment.
+  #
+  #  Delta mode: reads git diff, maps changed files to affected
+  #              (account, domain, module) triples using 4-layer rules.
+  #  Full mode : marks every module for every account as needing deploy.
+  #
+  #  Outputs deploy_matrix (JSON) consumed by deploy-new and parity-check.
+  # ──────────────────────────────────────────────────────────────────────
+  detect-changes:
+    name: 02 Detect Changes
+    runs-on: ubuntu-latest
+    needs: validate
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    outputs:
+      deploy_matrix:  ${{ steps.detect.outputs.deploy_matrix }}
+      has_changes:    ${{ steps.detect.outputs.has_changes }}
+      mode:           ${{ steps.detect.outputs.mode }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # needed for git diff across commits
+
+      - name: Install tools
+        run: pip install pyyaml
+
+      - name: Compute deploy matrix
+        id: detect
+        env:
+          DEPLOY_MODE: ${{ github.event.inputs.deploy_mode || 'delta' }}
+          FILTER_ACCOUNT: ${{ github.event.inputs.account || env.DEMO_ACCOUNT }}
+          BASE_SHA: ${{ github.event.before || github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          if [ "${DEPLOY_MODE}" = "full" ]; then
+            echo "Mode: FULL — deploying all modules regardless of changes"
+            OUTPUT=$(python3 new-structure/pipeline/detect_changes.py \
+              --mode full --account "${FILTER_ACCOUNT}")
+          else
+            echo "Mode: DELTA — computing changes from ${BASE_SHA}..${HEAD_SHA}"
+            OUTPUT=$(python3 new-structure/pipeline/detect_changes.py \
+              --base "${BASE_SHA}" --head "${HEAD_SHA}" \
+              --account "${FILTER_ACCOUNT}")
+          fi
+
+          echo "${OUTPUT}" | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          print('─── Deploy matrix ───────────────────────────────')
+          if not data['deploy_matrix']:
+              print('  (no changes detected)')
+          for item in data['deploy_matrix']:
+              print(f\"  {item['account']}  {item['domain']}/{item['module']}\")
+          print(f\"─── Mode: {data['mode']}  has_changes: {data['has_changes']} ───\")
+          "
+
+          HAS_CHANGES=$(echo "${OUTPUT}" | python3 -c "import json,sys; print(json.load(sys.stdin)['has_changes'])" | tr '[:upper:]' '[:lower:]')
+          MATRIX=$(echo "${OUTPUT}" | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps({'include': d['deploy_matrix']}))")
+
+          echo "has_changes=${HAS_CHANGES}" >> "$GITHUB_OUTPUT"
+          echo "mode=${DEPLOY_MODE}"        >> "$GITHUB_OUTPUT"
+          echo "deploy_matrix=${MATRIX}"    >> "$GITHUB_OUTPUT"
+
+  # ──────────────────────────────────────────────────────────────────────
+  # JOB 3: Deploy EXISTING — GATE: tesco-ims-deploy-existing
+  #  Always full (idempotent — existing stacks represent the live baseline).
+  #  detect-changes does not gate this job — existing infra is always refreshed.
+  # ──────────────────────────────────────────────────────────────────────
+  deploy-existing:
+    name: 03 Deploy EXISTING — dev (full, idempotent)
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    environment:
+      name: tesco-ims-deploy-existing
+      url: https://eu-west-1.console.aws.amazon.com/cloudformation/home?region=eu-west-1#/stacks
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/tesco-ims-migration-deploy-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy existing per-account structure — dev (all modules, idempotent)
+        run: bash scripts/stage1-deploy-existing.sh ${{ env.DEMO_ACCOUNT }}
+
+  # ──────────────────────────────────────────────────────────────────────
+  # JOB 4: Deploy NEW — GATE: tesco-ims-deploy-new
+  #  MATRIX job: each matrix item is one (account, domain, module) triple.
+  #  Only changed modules (from detect-changes) are in the matrix.
+  #  All matrix instances share one approval gate — reviewer approves once.
+  # ──────────────────────────────────────────────────────────────────────
+  deploy-new:
+    name: "04 Deploy NEW — ${{ matrix.account }} ${{ matrix.domain }}/${{ matrix.module }}"
+    runs-on: ubuntu-latest
+    needs: [deploy-existing, detect-changes]
+    if: |
+      (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+      && needs.detect-changes.outputs.has_changes == 'true'
+    strategy:
+      matrix: ${{ fromJSON(needs.detect-changes.outputs.deploy_matrix) }}
+      fail-fast: false   # one module failure doesn't cancel other modules
+    environment:
+      name: tesco-ims-deploy-new
+      url: >-
+        https://eu-west-1.console.aws.amazon.com/cloudformation/home?region=eu-west-1#/stacks
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: pip install cfn-lint boto3 pyyaml
+
+      - name: Configure AWS via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/tesco-ims-migration-deploy-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: "Deploy ${{ matrix.domain }}/${{ matrix.module }} → ${{ matrix.account }}"
+        run: |
+          bash scripts/stage2-deploy-new.sh \
+            ${{ matrix.account }} \
+            ${{ matrix.domain }}/${{ matrix.module }}
+
+  # ──────────────────────────────────────────────────────────────────────
+  # JOB 5: Parity Check — GATE: tesco-ims-parity-check
+  #  MATRIX job: validates each deployed module pair (EXISTING vs NEW).
+  #  Same matrix as deploy-new — only changed modules are checked.
+  # ──────────────────────────────────────────────────────────────────────
+  parity-check:
+    name: "05 Parity — ${{ matrix.account }} ${{ matrix.domain }}/${{ matrix.module }}"
+    runs-on: ubuntu-latest
+    needs: [deploy-new, detect-changes]
+    if: |
+      (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+      && needs.detect-changes.outputs.has_changes == 'true'
+    strategy:
+      matrix: ${{ fromJSON(needs.detect-changes.outputs.deploy_matrix) }}
+      fail-fast: false
+    environment:
+      name: tesco-ims-parity-check
+      url: >-
+        https://eu-west-1.console.aws.amazon.com/cloudformation/home?region=eu-west-1#/stacks
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: pip install boto3 pyyaml
+
+      - name: Configure AWS via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/tesco-ims-migration-deploy-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: "Parity: ${{ matrix.domain }}/${{ matrix.module }} → ${{ matrix.account }}"
+        run: |
+          source scripts/lib/stack-names.sh
+          OLD=$(cfn_stack_name "EXISTING" "${{ matrix.domain }}" "${{ matrix.module }}" "${{ matrix.account }}")
+          NEW=$(cfn_stack_name "NEW"      "${{ matrix.domain }}" "${{ matrix.module }}" "${{ matrix.account }}")
+          echo "EXISTING: ${OLD}"
+          echo "NEW:      ${NEW}"
+          pip install boto3 pyyaml -q
+          python3 new-structure/pipeline/validate_parity.py \
+            --old-stack "${OLD}" \
+            --new-stack "${NEW}" \
+            --region    ${{ env.AWS_REGION }}
