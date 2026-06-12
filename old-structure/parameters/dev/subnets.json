@@ -1,0 +1,10 @@
+[
+  { "ParameterKey": "VpcStackName",       "ParameterValue": "poc-OLD-vpc-dev" },
+  { "ParameterKey": "Environment",        "ParameterValue": "dev" },
+  { "ParameterKey": "PublicSubnetACidr",  "ParameterValue": "10.1.1.0/24" },
+  { "ParameterKey": "PublicSubnetBCidr",  "ParameterValue": "10.1.2.0/24" },
+  { "ParameterKey": "PrivateSubnetACidr", "ParameterValue": "10.1.10.0/24" },
+  { "ParameterKey": "PrivateSubnetBCidr", "ParameterValue": "10.1.11.0/24" },
+  { "ParameterKey": "CostCentre",         "ParameterValue": "TESCO-IMS-PLATFORM" },
+  { "ParameterKey": "ManagedBy",          "ParameterValue": "github-actions" }
+]
