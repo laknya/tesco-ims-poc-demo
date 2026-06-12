@@ -1,0 +1,82 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  TESCO IMS POC - VPC Template (OLD STRUCTURE)
+  Source: tescoiacpoc/cloudformation/vpc-template.yaml
+  Status: Live deployed - do not modify during migration
+
+Parameters:
+  VpcCidr:
+    Type: String
+    Default: "10.0.0.0/16"
+  VpcName:
+    Type: String
+    Default: "tesco-poc-vpc"
+  Environment:
+    Type: String
+    AllowedValues: [dev, prod]
+    Default: dev
+  EnableDnsHostnames:
+    Type: String
+    Default: "true"
+  EnableDnsSupport:
+    Type: String
+    Default: "true"
+  CostCentre:
+    Type: String
+    Default: "TESCO-IMS-PLATFORM"
+  ManagedBy:
+    Type: String
+    Default: "github-actions"
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: !Ref EnableDnsHostnames
+      EnableDnsSupport: !Ref EnableDnsSupport
+      Tags:
+        - Key: Name
+          Value: !Ref VpcName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCentre
+          Value: !Ref CostCentre
+        - Key: ManagedBy
+          Value: !Ref ManagedBy
+        - Key: StructureVersion
+          Value: "old-per-env"
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${VpcName}-igw"
+        - Key: Environment
+          Value: !Ref Environment
+
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+Outputs:
+  VpcId:
+    Description: VPC ID
+    Value: !Ref VPC
+    Export:
+      Name: !Sub "${AWS::StackName}-VpcId"
+
+  VpcCidr:
+    Description: VPC CIDR Block
+    Value: !GetAtt VPC.CidrBlock
+    Export:
+      Name: !Sub "${AWS::StackName}-VpcCidr"
+
+  InternetGatewayId:
+    Description: Internet Gateway ID
+    Value: !Ref InternetGateway
+    Export:
+      Name: !Sub "${AWS::StackName}-IgwId"
