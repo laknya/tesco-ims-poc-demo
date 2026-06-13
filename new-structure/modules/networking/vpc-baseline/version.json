@@ -1,0 +1,10 @@
+{
+  "version": "1.0.0",
+  "type_name": "TescoIMS::Networking::VpcBaseline",
+  "released": "2026-06-12",
+  "template_hash": "sha256:8dbd58116921518f0147d6797e22a42c2d5e1c5c65c37606ad7874b39c4373fa",
+  "status": "default",
+  "breaking_changes": [],
+  "changelog": "Initial release. Replaces 68 per-account vpc-template.yaml copies. Subnets, DNS, and governance via 4-layer parameter system.",
+  "cfn_registry_note": "In production: register as private module via 'aws cloudformation register-type --type MODULE --type-name TescoIMS::Networking::VpcBaseline'. Set default with 'aws cloudformation set-type-default-version'."
+}

@@ -1,0 +1,14 @@
+[
+  { "ParameterKey": "AccountId",          "ParameterValue": "111222333444" },
+  { "ParameterKey": "Environment",        "ParameterValue": "dev" },
+  { "ParameterKey": "VpcCidr",            "ParameterValue": "10.1.0.0/16" },
+  { "ParameterKey": "VpcName",            "ParameterValue": "coll-dev-vpc" },
+  { "ParameterKey": "EnableDnsHostnames", "ParameterValue": "true" },
+  { "ParameterKey": "EnableDnsSupport",   "ParameterValue": "true" },
+  { "ParameterKey": "PublicSubnetACidr",  "ParameterValue": "10.1.1.0/24" },
+  { "ParameterKey": "PublicSubnetBCidr",  "ParameterValue": "10.1.2.0/24" },
+  { "ParameterKey": "PrivateSubnetACidr", "ParameterValue": "10.1.10.0/24" },
+  { "ParameterKey": "PrivateSubnetBCidr", "ParameterValue": "10.1.11.0/24" },
+  { "ParameterKey": "CostCentre",         "ParameterValue": "TESCO-IMS-PLATFORM" },
+  { "ParameterKey": "ManagedBy",          "ParameterValue": "github-actions" }
+]

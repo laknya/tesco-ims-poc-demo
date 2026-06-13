@@ -1,0 +1,214 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  TESCO IMS - VPC Baseline (MASTER TEMPLATE)
+  ──────────────────────────────────────────────────────────────────────
+  ONE file. Deployed to ALL accounts via parameters.
+  Replaces: existing-structure/coll-dev/vpc-template.yaml
+            existing-structure/coll-ppe/vpc-template.yaml
+            existing-structure/sandbox/vpc-template.yaml
+            ... (65 more per-account copies)
+
+  No hardcoded values. All values come from the 4-layer config system.
+  ──────────────────────────────────────────────────────────────────────
+
+Parameters:
+  # --- Account Identity ---
+  AccountId:
+    Type: String
+    Description: 12-digit AWS Account ID
+    AllowedPattern: "^[0-9]{12}$"
+
+  Environment:
+    Type: String
+    AllowedValues: [dev, ppe, tst, prod]
+
+  # --- VPC ---
+  VpcCidr:
+    Type: String
+
+  VpcName:
+    Type: String
+
+  EnableDnsHostnames:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+
+  EnableDnsSupport:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+
+  # --- Subnets ---
+  PublicSubnetACidr:
+    Type: String
+
+  PublicSubnetBCidr:
+    Type: String
+
+  PrivateSubnetACidr:
+    Type: String
+
+  PrivateSubnetBCidr:
+    Type: String
+
+  # --- Governance ---
+  CostCentre:
+    Type: String
+    Default: "TESCO-IMS-PLATFORM"
+
+  ManagedBy:
+    Type: String
+    Default: "github-actions"
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: !Ref EnableDnsHostnames
+      EnableDnsSupport: !Ref EnableDnsSupport
+      Tags:
+        - Key: Name
+          Value: !Ref VpcName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCentre
+          Value: !Ref CostCentre
+        - Key: ManagedBy
+          Value: !Ref ManagedBy
+        - Key: AccountId
+          Value: !Ref AccountId
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${VpcName}-igw"
+        - Key: Environment
+          Value: !Ref Environment
+
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PublicSubnetACidr
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${VpcName}-public-a"
+        - Key: Tier
+          Value: public
+        - Key: Environment
+          Value: !Ref Environment
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PublicSubnetBCidr
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${VpcName}-public-b"
+        - Key: Tier
+          Value: public
+        - Key: Environment
+          Value: !Ref Environment
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivateSubnetACidr
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub "${VpcName}-private-a"
+        - Key: Tier
+          Value: private
+        - Key: Environment
+          Value: !Ref Environment
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivateSubnetBCidr
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub "${VpcName}-private-b"
+        - Key: Tier
+          Value: private
+        - Key: Environment
+          Value: !Ref Environment
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${VpcName}-public-rt"
+        - Key: Environment
+          Value: !Ref Environment
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetAAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetA
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetBAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetB
+      RouteTableId: !Ref PublicRouteTable
+
+Outputs:
+  VpcId:
+    Value: !Ref VPC
+    Export:
+      Name: !Sub "${AWS::StackName}-VpcId"
+  VpcCidr:
+    Value: !GetAtt VPC.CidrBlock
+    Export:
+      Name: !Sub "${AWS::StackName}-VpcCidr"
+  InternetGatewayId:
+    Value: !Ref InternetGateway
+    Export:
+      Name: !Sub "${AWS::StackName}-IgwId"
+  PublicSubnetAId:
+    Value: !Ref PublicSubnetA
+    Export:
+      Name: !Sub "${AWS::StackName}-PublicSubnetAId"
+  PublicSubnetBId:
+    Value: !Ref PublicSubnetB
+    Export:
+      Name: !Sub "${AWS::StackName}-PublicSubnetBId"
+  PrivateSubnetAId:
+    Value: !Ref PrivateSubnetA
+    Export:
+      Name: !Sub "${AWS::StackName}-PrivateSubnetAId"
+  PrivateSubnetBId:
+    Value: !Ref PrivateSubnetB
+    Export:
+      Name: !Sub "${AWS::StackName}-PrivateSubnetBId"

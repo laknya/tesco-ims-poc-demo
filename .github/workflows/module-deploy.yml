@@ -1,0 +1,303 @@
+name: Module Deploy (On-Demand)
+
+# ── Purpose ───────────────────────────────────────────────────────────────────
+#
+#  Ad-hoc / on-demand deployment of one or more specific modules to a specific
+#  account — without requiring a git diff to have changed anything.
+#
+#  Use cases
+#  ─────────
+#  • Hotfix: re-deploy a single module after a manual AWS console change drifted
+#  • New account onboarding: deploy all modules to a newly registered account
+#  • Rollout: push a new module version to one account before the rest
+#  • Troubleshoot: re-run parity on a single stack after investigating a failure
+#  • Plan (dry-run): preview what CFN would change before committing
+#
+#  How it differs from migration-pipeline.yml
+#  ──────────────────────────────────────────
+#  migration-pipeline.yml  → triggered by git push, deploys delta or full set
+#  module-deploy.yml       → triggered manually, targets exactly the modules you name
+#
+#  Flow
+#  ────
+#  [Input] ──► validate-inputs ──► plan (optional)
+#                                    └─► [GATE: tesco-ims-deploy-new]
+#                                          └─► deploy (matrix: one job per module)
+#
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  workflow_dispatch:
+    inputs:
+
+      account:
+        description: "Target account name (must exist in _accounts-registry.yaml)"
+        required: true
+        default: dev
+        type: choice
+        options:
+          - dev
+          - sandbox
+          - coll-dev
+          - coll-ppe
+
+      modules:
+        description: |
+          Comma-separated list of domain/module paths to deploy.
+          Examples:
+            networking/vpc-baseline
+            security/kms-key, shared-services/s3-bucket
+            networking/vpc-baseline, security/kms-key, shared-services/s3-bucket
+          Leave blank to deploy ALL modules configured for the account.
+        required: false
+        default: ""
+
+      action:
+        description: |
+          deploy → resolve params, create change set, execute it
+          plan   → resolve params, create change set, DO NOT execute (review only)
+        required: true
+        default: deploy
+        type: choice
+        options:
+          - deploy
+          - plan
+
+      confirm:
+        description: "Type DEPLOY to confirm (ignored for plan runs)"
+        required: true
+        default: ""
+
+env:
+  AWS_REGION: eu-west-1
+
+permissions:
+  id-token: write
+  contents: read
+  deployments: write
+
+jobs:
+
+  # ──────────────────────────────────────────────────────────────────────
+  # JOB 1: Validate inputs — no AWS, fast fail on bad inputs
+  # ──────────────────────────────────────────────────────────────────────
+  validate-inputs:
+    name: Validate Inputs
+    runs-on: ubuntu-latest
+    outputs:
+      deploy_matrix: ${{ steps.build-matrix.outputs.deploy_matrix }}
+      has_modules:   ${{ steps.build-matrix.outputs.has_modules }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: pip install pyyaml
+
+      - name: Check confirm field (deploy runs only)
+        if: inputs.action == 'deploy'
+        run: |
+          if [ "${{ inputs.confirm }}" != "DEPLOY" ]; then
+            echo "❌ You must type DEPLOY in the 'confirm' field to proceed."
+            echo "   action=deploy requires explicit confirmation."
+            exit 1
+          fi
+
+      - name: Validate account exists in registry
+        run: |
+          python3 - <<'EOF'
+          import yaml, sys
+          reg = yaml.safe_load(open("new-structure/config/_accounts-registry.yaml"))["accounts"]
+          account = "${{ inputs.account }}"
+          if account not in reg:
+              print(f"❌ Account '{account}' not found in _accounts-registry.yaml")
+              print(f"   Known accounts: {', '.join(reg.keys())}")
+              sys.exit(1)
+          print(f"✅ Account '{account}' found in registry")
+          print(f"   env={reg[account]['environment']}  ou={reg[account]['ou']}")
+          EOF
+
+      - name: Build deploy matrix from inputs
+        id: build-matrix
+        run: |
+          pip install pyyaml -q
+
+          ACCOUNT="${{ inputs.account }}"
+          RAW_MODULES="${{ inputs.modules }}"
+
+          if [ -z "${RAW_MODULES}" ]; then
+            # No filter — deploy all modules for this account
+            echo "No module filter — deploying all modules for '${ACCOUNT}'"
+            OUTPUT=$(python3 new-structure/pipeline/detect_changes.py \
+              --mode full --account "${ACCOUNT}" 2>/dev/null)
+          else
+            # Build explicit file list from the module names to feed detect_changes
+            # Convert "networking/vpc-baseline, security/kms-key" → explicit --files args
+            echo "Module filter: ${RAW_MODULES}"
+            FILES_ARGS=""
+            IFS=',' read -ra MODS <<< "${RAW_MODULES}"
+            for mod in "${MODS[@]}"; do
+              mod=$(echo "${mod}" | xargs)  # trim whitespace
+              domain="${mod%/*}"
+              module="${mod#*/}"
+              # Use the account config file path — triggers single-account scope
+              FILES_ARGS="${FILES_ARGS} --files new-structure/config/accounts/${ACCOUNT}/${domain}/${module}.json"
+            done
+            # shellcheck disable=SC2086
+            OUTPUT=$(python3 new-structure/pipeline/detect_changes.py ${FILES_ARGS} \
+              --account "${ACCOUNT}" 2>/dev/null)
+          fi
+
+          echo "${OUTPUT}" | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          print('─── Planned deployments ─────────────────────────────')
+          if not data['deploy_matrix']:
+              print('  ⚠️  No modules matched. Check account/module names.')
+          for item in data['deploy_matrix']:
+              print(f\"  {item['account']}  {item['domain']}/{item['module']}\")
+          print(f\"─── Total: {len(data['deploy_matrix'])} deployment(s) ───────────────\")
+          "
+
+          HAS_MODULES=$(echo "${OUTPUT}" | python3 -c \
+            "import json,sys; print(json.load(sys.stdin)['has_changes'])" | \
+            tr '[:upper:]' '[:lower:]')
+          MATRIX=$(echo "${OUTPUT}" | python3 -c \
+            "import json,sys; d=json.load(sys.stdin); print(json.dumps({'include': d['deploy_matrix']}))")
+
+          echo "has_modules=${HAS_MODULES}" >> "$GITHUB_OUTPUT"
+          echo "deploy_matrix=${MATRIX}"    >> "$GITHUB_OUTPUT"
+
+      - name: Validate module configs exist
+        if: steps.build-matrix.outputs.has_modules == 'true'
+        run: |
+          pip install pyyaml cfn-lint -q
+          python3 new-structure/pipeline/check_module_versions.py
+          python3 new-structure/pipeline/validate_schema.py --account "${{ inputs.account }}"
+          echo "✅ All module configs valid"
+
+  # ──────────────────────────────────────────────────────────────────────
+  # JOB 2: Plan — create change sets without executing (review gate)
+  #  Runs for BOTH action=plan and action=deploy so reviewers always see
+  #  what would change before the gate is reached.
+  # ──────────────────────────────────────────────────────────────────────
+  plan:
+    name: "Plan — ${{ matrix.account }} ${{ matrix.domain }}/${{ matrix.module }}"
+    runs-on: ubuntu-latest
+    needs: validate-inputs
+    if: needs.validate-inputs.outputs.has_modules == 'true'
+    strategy:
+      matrix: ${{ fromJSON(needs.validate-inputs.outputs.deploy_matrix) }}
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: pip install cfn-lint boto3 pyyaml
+
+      - name: Configure AWS via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/tesco-ims-migration-deploy-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: "Plan: ${{ matrix.domain }}/${{ matrix.module }} → ${{ matrix.account }}"
+        run: |
+          source scripts/lib/stack-names.sh
+
+          DOMAIN="${{ matrix.domain }}"
+          MODULE="${{ matrix.module }}"
+          ACCOUNT="${{ matrix.account }}"
+          STACK=$(cfn_stack_name "NEW" "${DOMAIN}" "${MODULE}" "${ACCOUNT}")
+          TEMPLATE="new-structure/modules/${DOMAIN}/${MODULE}/template.yaml"
+          RESOLVED="/tmp/plan-${ACCOUNT}-${DOMAIN}-${MODULE}.json"
+          CHANGESET_NAME="on-demand-plan-$(date +%Y%m%d%H%M%S)"
+
+          echo "Stack     : ${STACK}"
+          echo "Template  : ${TEMPLATE}"
+          echo "Changeset : ${CHANGESET_NAME}"
+          echo ""
+
+          # Resolve parameters
+          python3 new-structure/pipeline/resolve_parameters.py \
+            --account "${ACCOUNT}" --domain "${DOMAIN}" --module "${MODULE}" \
+            --output "${RESOLVED}"
+
+          # Convert CFN param list to key=value for deploy --parameter-overrides
+          PARAMS=$(python3 -c "
+          import json
+          items = json.load(open('${RESOLVED}'))
+          print(' '.join(f\"{i['ParameterKey']}={i['ParameterValue']}\" for i in items))
+          ")
+
+          EXTRA_CAPS=""
+          [[ "${MODULE}" == "kms-key" ]] && EXTRA_CAPS="--capabilities CAPABILITY_NAMED_IAM"
+
+          # Create change set without executing it (--no-execute-changeset)
+          # shellcheck disable=SC2086
+          aws cloudformation deploy \
+            --stack-name  "${STACK}" \
+            --template-file "${TEMPLATE}" \
+            --parameter-overrides ${PARAMS} \
+            --no-execute-changeset \
+            --region "${AWS_REGION}" \
+            --no-fail-on-empty-changeset \
+            ${EXTRA_CAPS} \
+            2>&1 | tee /tmp/plan-output.txt || true
+
+          echo ""
+          echo "── Change set summary ─────────────────────────────────"
+          # Extract and show the change set name from the output
+          CS=$(grep -oE 'arn:aws:cloudformation:[^"]+' /tmp/plan-output.txt | head -1 || echo "")
+          if [ -n "${CS}" ]; then
+            aws cloudformation describe-change-set \
+              --change-set-name "${CS}" \
+              --region "${AWS_REGION}" \
+              --query 'Changes[].{Action:ResourceChange.Action,Resource:ResourceChange.LogicalResourceId,Type:ResourceChange.ResourceType}' \
+              --output table 2>/dev/null || echo "  (change set details unavailable)"
+          else
+            echo "  No changes detected — stack is up to date."
+          fi
+
+          if [ "${{ inputs.action }}" = "plan" ]; then
+            echo ""
+            echo "ℹ️  action=plan — change set created but NOT executed."
+            echo "   Review the change set in the AWS console, then re-run"
+            echo "   this workflow with action=deploy to apply it."
+          fi
+
+  # ──────────────────────────────────────────────────────────────────────
+  # JOB 3: Deploy — GATE: tesco-ims-deploy-new
+  #  Only runs when action=deploy. Reviewer sees the plan job output
+  #  (change set summary) before approving this gate.
+  # ──────────────────────────────────────────────────────────────────────
+  deploy:
+    name: "Deploy — ${{ matrix.account }} ${{ matrix.domain }}/${{ matrix.module }}"
+    runs-on: ubuntu-latest
+    needs: [validate-inputs, plan]
+    if: |
+      needs.validate-inputs.outputs.has_modules == 'true'
+      && inputs.action == 'deploy'
+    strategy:
+      matrix: ${{ fromJSON(needs.validate-inputs.outputs.deploy_matrix) }}
+      fail-fast: false
+    environment:
+      name: tesco-ims-deploy-new
+      url: >-
+        https://eu-west-1.console.aws.amazon.com/cloudformation/home?region=eu-west-1#/stacks
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: pip install cfn-lint boto3 pyyaml
+
+      - name: Configure AWS via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/tesco-ims-migration-deploy-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: "Deploy ${{ matrix.domain }}/${{ matrix.module }} → ${{ matrix.account }}"
+        run: |
+          bash scripts/stage2-deploy-new.sh \
+            "${{ matrix.account }}" \
+            "${{ matrix.domain }}/${{ matrix.module }}"

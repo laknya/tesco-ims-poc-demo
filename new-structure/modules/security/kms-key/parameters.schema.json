@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "kms-key module parameters",
+  "description": "Contract for the security/kms-key module. All fields required unless noted.",
+  "type": "object",
+  "required": [
+    "AccountId",
+    "Environment",
+    "KeyDescription",
+    "KeyAdminArn",
+    "KeyUsageArn"
+  ],
+  "properties": {
+    "AccountId":            { "type": "string", "pattern": "^[0-9]{12}$" },
+    "Environment":          { "type": "string", "enum": ["dev","ppe","tst","prod"] },
+    "KeyDescription":       { "type": "string" },
+    "DeletionWindowInDays": { "type": "string", "default": "30" },
+    "EnableKeyRotation":    { "type": "string", "enum": ["true","false"], "default": "true" },
+    "KeyAdminArn":          { "type": "string", "description": "Full ARN of admin principal (kms:*)" },
+    "KeyUsageArn":          { "type": "string", "description": "Full ARN of usage principal (encrypt/decrypt)" },
+    "CostCentre":           { "type": "string", "default": "TESCO-IMS-PLATFORM" },
+    "ManagedBy":            { "type": "string", "default": "github-actions" }
+  }
+}

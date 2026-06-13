@@ -1,0 +1,217 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  SANDBOX VPC — Sandbox / POC Account
+  ──────────────────────────────────────────────────────────────────────
+  THIS IS THE OLD STRUCTURE.
+  This file is one of 68 nearly-identical copies in the repository:
+    coll-dev/vpc-template.yaml    ← YOU ARE HERE
+    coll-ppe/vpc-template.yaml    ← identical structure, different defaults
+    coll-prd/vpc-template.yaml    ← identical structure, different defaults
+    coll-tst/vpc-template.yaml    ← identical structure, different defaults
+    comm-dev/vpc-template.yaml    ← identical structure, different defaults
+    ... (63 more copies)
+
+  Problem: Change a VPC tag → edit 68 files.
+           Miss one file → infrastructure inconsistency across accounts.
+  ──────────────────────────────────────────────────────────────────────
+
+Parameters:
+  AccountId:
+    Type: String
+    Default: "999888777666"      # hardcoded per file
+
+  Environment:
+    Type: String
+    Default: "dev"               # hardcoded per file
+
+  VpcCidr:
+    Type: String
+    Default: "10.99.0.0/16"      # hardcoded per file
+
+  VpcName:
+    Type: String
+    Default: "sandbox-vpc"     # hardcoded per file
+
+  EnableDnsHostnames:
+    Type: String
+    Default: "true"              # duplicated in all 68 files
+
+  EnableDnsSupport:
+    Type: String
+    Default: "true"              # duplicated in all 68 files
+
+  PublicSubnetACidr:
+    Type: String
+    Default: "10.0.1.0/24"     # duplicated (only 3rd octet differs per account)
+
+  PublicSubnetBCidr:
+    Type: String
+    Default: "10.0.2.0/24"     # duplicated
+
+  PrivateSubnetACidr:
+    Type: String
+    Default: "10.0.10.0/24"    # duplicated
+
+  PrivateSubnetBCidr:
+    Type: String
+    Default: "10.0.11.0/24"    # duplicated
+
+  CostCentre:
+    Type: String
+    Default: "TESCO-IMS-PLATFORM"  # duplicated in all 68 files
+
+  ManagedBy:
+    Type: String
+    Default: "github-actions"      # duplicated in all 68 files
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: !Ref EnableDnsHostnames
+      EnableDnsSupport: !Ref EnableDnsSupport
+      Tags:
+        - Key: Name
+          Value: !Ref VpcName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCentre
+          Value: !Ref CostCentre
+        - Key: ManagedBy
+          Value: !Ref ManagedBy
+        - Key: AccountId
+          Value: !Ref AccountId
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${VpcName}-igw"
+        - Key: Environment
+          Value: !Ref Environment
+
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PublicSubnetACidr
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${VpcName}-public-a"
+        - Key: Tier
+          Value: public
+        - Key: Environment
+          Value: !Ref Environment
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PublicSubnetBCidr
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${VpcName}-public-b"
+        - Key: Tier
+          Value: public
+        - Key: Environment
+          Value: !Ref Environment
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivateSubnetACidr
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub "${VpcName}-private-a"
+        - Key: Tier
+          Value: private
+        - Key: Environment
+          Value: !Ref Environment
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivateSubnetBCidr
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub "${VpcName}-private-b"
+        - Key: Tier
+          Value: private
+        - Key: Environment
+          Value: !Ref Environment
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${VpcName}-public-rt"
+        - Key: Environment
+          Value: !Ref Environment
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetAAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetA
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetBAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetB
+      RouteTableId: !Ref PublicRouteTable
+
+Outputs:
+  VpcId:
+    Value: !Ref VPC
+    Export:
+      Name: !Sub "${AWS::StackName}-VpcId"
+  VpcCidr:
+    Value: !GetAtt VPC.CidrBlock
+    Export:
+      Name: !Sub "${AWS::StackName}-VpcCidr"
+  InternetGatewayId:
+    Value: !Ref InternetGateway
+    Export:
+      Name: !Sub "${AWS::StackName}-IgwId"
+  PublicSubnetAId:
+    Value: !Ref PublicSubnetA
+    Export:
+      Name: !Sub "${AWS::StackName}-PublicSubnetAId"
+  PublicSubnetBId:
+    Value: !Ref PublicSubnetB
+    Export:
+      Name: !Sub "${AWS::StackName}-PublicSubnetBId"
+  PrivateSubnetAId:
+    Value: !Ref PrivateSubnetA
+    Export:
+      Name: !Sub "${AWS::StackName}-PrivateSubnetAId"
+  PrivateSubnetBId:
+    Value: !Ref PrivateSubnetB
+    Export:
+      Name: !Sub "${AWS::StackName}-PrivateSubnetBId"

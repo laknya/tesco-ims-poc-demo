@@ -1,9 +1,0 @@
-{
-  "Environment":        "prod",
-  "VpcCidr":            "10.2.0.0/16",
-  "VpcName":            "tesco-poc-prod-vpc",
-  "PublicSubnetACidr":  "10.2.1.0/24",
-  "PublicSubnetBCidr":  "10.2.2.0/24",
-  "PrivateSubnetACidr": "10.2.10.0/24",
-  "PrivateSubnetBCidr": "10.2.11.0/24"
-}

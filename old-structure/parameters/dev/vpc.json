@@ -1,9 +1,0 @@
-[
-  { "ParameterKey": "VpcCidr",            "ParameterValue": "10.1.0.0/16" },
-  { "ParameterKey": "VpcName",            "ParameterValue": "tesco-poc-dev-vpc" },
-  { "ParameterKey": "Environment",        "ParameterValue": "dev" },
-  { "ParameterKey": "EnableDnsHostnames", "ParameterValue": "true" },
-  { "ParameterKey": "EnableDnsSupport",   "ParameterValue": "true" },
-  { "ParameterKey": "CostCentre",         "ParameterValue": "TESCO-IMS-PLATFORM" },
-  { "ParameterKey": "ManagedBy",          "ParameterValue": "github-actions" }
-]

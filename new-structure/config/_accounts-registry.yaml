@@ -1,0 +1,42 @@
+# TESCO IMS — Accounts Registry
+# Single source of truth for all account metadata.
+# Replaces 68 individual _account.yaml files.
+#
+# To add an account: add one entry here, create a 4-line account delta JSON,
+# then run: python3 pipeline/generate_account_params.py
+#
+# Real deployment would have all 68 accounts. This POC shows the dev account (primary demo)
+# plus coll-dev/coll-ppe as illustrative examples of the duplication problem.
+
+accounts:
+  dev:
+    id: "641079926471"
+    name: "TESCO IMS - Development"
+    environment: dev
+    group: platform
+    ou: non-production/dev
+    application: tesco-ims-platform
+
+  coll-dev:
+    id: "111222333444"
+    name: "TESCO IMS - Collaboration DEV"
+    environment: dev
+    group: COLL
+    ou: production/workload
+    application: retail-collections
+
+  coll-ppe:
+    id: "222333444555"
+    name: "TESCO IMS - Collaboration PPE"
+    environment: ppe
+    group: COLL
+    ou: production/workload
+    application: retail-collections
+
+  sandbox:
+    id: "999888777666"
+    name: "TESCO IMS - Sandbox / POC"
+    environment: dev
+    group: sandbox
+    ou: non-production/sandbox
+    application: poc-demo

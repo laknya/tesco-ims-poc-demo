@@ -1,0 +1,9 @@
+{
+  "AccountId":      "641079926471",
+  "Environment":    "dev",
+  "BucketName":     "tesco-ims-platform-641079926471-dev",
+  "KmsKeyArn":      "arn:aws:kms:eu-west-1:641079926471:alias/tesco-ims-dev",
+  "BucketAdminArn": "arn:aws:iam::641079926471:root",
+  "BucketWriterArn":"arn:aws:iam::641079926471:role/github-actions-deploy",
+  "VpcStackName":   "poc-NEW-networking-vpc-baseline-dev"
+}

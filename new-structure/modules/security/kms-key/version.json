@@ -1,0 +1,10 @@
+{
+  "version": "1.0.0",
+  "type_name": "TescoIMS::Security::KmsKey",
+  "released": "2026-06-12",
+  "template_hash": "sha256:30a73d814f9ec06ae999d1331a5ec001712f15c230d13b6aeb043e2aa5c5ba71",
+  "status": "default",
+  "breaking_changes": [],
+  "changelog": "Initial release. Replaces 68 per-account kms-template.yaml copies. Key policy principals (KeyAdminArn, KeyUsageArn) sourced from JSON config \u2014 security team owns policy, platform team owns template.",
+  "cfn_registry_note": "In production: register as private module via 'aws cloudformation register-type --type MODULE --type-name TescoIMS::Security::KmsKey'. Set default with 'aws cloudformation set-type-default-version'."
+}

@@ -1,0 +1,182 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Metadata:
+  cfn-lint:
+    config:
+      ignore_checks:
+        - W3005   # DependsOn: S3Bucket on S3BucketPolicy is explicit for demo readability (redundant but self-documenting)
+Description: |
+  TESCO IMS — S3 Bucket (centralized module)
+  Replaces: existing-structure/dev/s3-template.yaml
+            existing-structure/coll-dev/s3-template.yaml
+            ... (one file replaces all per-account copies)
+
+  Bucket policy principals (BucketAdminArn, BucketWriterArn) are parameters.
+  Security team owns accounts/{account}/shared-services/s3-bucket.json.
+  Platform team owns this template. No cross-team template edits needed.
+
+  Cross-stack dependency:
+    This stack imports VpcId from the VPC stack (VpcStackName parameter).
+    CloudFormation will refuse to deploy this stack until the VPC stack exists
+    and has exported <VpcStackName>-VpcId. The bucket policy enforces that all
+    S3 requests must originate from that VPC (DenyNonVpcAccess statement).
+
+Parameters:
+  AccountId:
+    Type: String
+  Environment:
+    Type: String
+  BucketName:
+    Type: String
+  KmsKeyArn:
+    Type: String
+    Description: ARN or alias of the KMS key used for bucket encryption
+  BucketAdminArn:
+    Type: String
+    Description: IAM ARN granted full s3:* on this bucket (security team config)
+  BucketWriterArn:
+    Type: String
+    Description: IAM ARN granted read/write on this bucket (security team config)
+  EnableVersioning:
+    Type: String
+    AllowedValues: [Enabled, Suspended]
+  LifecycleRetentionDays:
+    Type: Number
+    Description: Days to retain noncurrent object versions before expiry
+  CostCentre:
+    Type: String
+  ManagedBy:
+    Type: String
+  # ── Cross-stack reference ──────────────────────────────────────────────────
+  # The VPC stack name whose exported VpcId this bucket policy will reference.
+  # Populated by the 4-layer resolver from accounts/{account}/shared-services/s3-bucket.json.
+  # CloudFormation will fail at deploy time if this stack does not exist or has
+  # not exported <VpcStackName>-VpcId — enforcing the correct deployment order.
+  VpcStackName:
+    Type: String
+    Description: >
+      Name of the VPC stack whose VpcId export this bucket policy imports.
+      Must match the VPC stack deployed to the same account/region.
+
+Resources:
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketName
+      VersioningConfiguration:
+        Status: !Ref EnableVersioning
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !Ref KmsKeyArn
+            BucketKeyEnabled: true
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireNoncurrentVersions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: !Ref LifecycleRetentionDays
+      Tags:
+        - Key: Name
+          Value: !Ref BucketName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCentre
+          Value: !Ref CostCentre
+        - Key: ManagedBy
+          Value: !Ref ManagedBy
+        - Key: AccountId
+          Value: !Ref AccountId
+
+  S3BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    # DependsOn is explicit here even though CloudFormation could infer it from
+    # the !Ref / !GetAtt references below.  Explicit DependsOn makes the ordering
+    # contract visible to reviewers: the bucket MUST exist before its policy can
+    # be created or updated.
+    DependsOn: S3Bucket
+    Properties:
+      Bucket: !Ref S3Bucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AdminAccess
+            Effect: Allow
+            Principal:
+              AWS: !Ref BucketAdminArn
+            Action: 's3:*'
+            Resource:
+              - !GetAtt S3Bucket.Arn
+              - !Sub '${S3Bucket.Arn}/*'
+
+          - Sid: WriterAccess
+            Effect: Allow
+            Principal:
+              AWS: !Ref BucketWriterArn
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:DeleteObject
+              - s3:ListBucket
+            Resource:
+              - !GetAtt S3Bucket.Arn
+              - !Sub '${S3Bucket.Arn}/*'
+
+          # ── Cross-stack reference in action ─────────────────────────────
+          # Fn::ImportValue reads the VpcId exported by the VPC stack.
+          # This statement denies ALL S3 access that does not originate from
+          # that VPC, enforcing network-layer isolation at the bucket policy level.
+          #
+          # Deployment order enforced by CloudFormation:
+          #   1. poc-NEW-vpc-dev   (exports poc-NEW-vpc-dev-VpcId)
+          #   2. poc-NEW-s3-dev    (imports that export — fails if VPC stack missing)
+          #
+          # Stack export name pattern: <VpcStackName>-VpcId
+          # Resolved at deploy time via Fn::ImportValue — never hardcoded.
+          - Sid: DenyNonVpcAccess
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt S3Bucket.Arn
+              - !Sub '${S3Bucket.Arn}/*'
+            Condition:
+              StringNotEquals:
+                aws:SourceVpc:
+                  Fn::ImportValue: !Sub "${VpcStackName}-VpcId"
+
+Outputs:
+  BucketName:
+    Value: !Ref S3Bucket
+    Export:
+      Name: !Sub "${AWS::StackName}-BucketName"
+  BucketArn:
+    Value: !GetAtt S3Bucket.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-BucketArn"
+  BucketDomainName:
+    Value: !GetAtt S3Bucket.DomainName
+    Export:
+      Name: !Sub "${AWS::StackName}-BucketDomainName"
+  # ── How downstream stacks consume this stack's outputs ──────────────────
+  # A downstream stack (EC2, ECS, Lambda) can reference this bucket like this:
+  #
+  #   Parameters:
+  #     S3StackName:
+  #       Type: String
+  #       Default: "poc-NEW-s3-dev"
+  #   Resources:
+  #     MyFunction:
+  #       Properties:
+  #         Environment:
+  #           Variables:
+  #             BUCKET_ARN:
+  #               Fn::ImportValue: !Sub "${S3StackName}-BucketArn"
+  #
+  # The VPC stack is referenced the same way (VpcStackName → VpcId, SubnetIds, etc.)
+  # The resolver supplies the correct stack name per account — no hardcoding needed.

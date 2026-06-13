@@ -1,0 +1,186 @@
+AWSTemplateFormatVersion: '2010-09-09'
+# cfn-lint: W2001 is suppressed for EnableKmsEncryption and EnableAccessLogging.
+# These parameters exist in the old template but are never referenced — the template
+# hardcodes encryption and logging behaviour instead. This is intentional: it illustrates
+# the drift problem (parameters declared but not wired up across 68 copies).
+Metadata:
+  cfn-lint:
+    config:
+      ignore_checks:
+        - W2001   # EnableKmsEncryption / EnableAccessLogging declared but not wired (intentional legacy drift)
+        - W3005   # DependsOn: S3Bucket is explicit for demo readability (redundant but self-documenting)
+Description: |
+  DEV S3 Bucket — Development Account
+  ──────────────────────────────────────────────────────────────────────
+  THIS IS THE OLD STRUCTURE.
+  This file is one of 68 nearly-identical copies in the repository:
+    dev/s3-template.yaml           ← YOU ARE HERE
+    coll-dev/s3-template.yaml      ← identical structure, different defaults
+    coll-ppe/s3-template.yaml      ← identical structure, different defaults
+    ... (65 more copies)
+
+  Problem: Change the bucket policy principal → edit 68 files.
+           Change lifecycle retention → touch 68 templates.
+           Rotate KMS key ARN → update 68 hardcoded defaults.
+  ──────────────────────────────────────────────────────────────────────
+
+Parameters:
+  AccountId:
+    Type: String
+    Default: "641079926471"                         # hardcoded per file
+
+  Environment:
+    Type: String
+    Default: "dev"                                  # hardcoded per file
+
+  BucketName:
+    Type: String
+    Default: "tesco-ims-platform-641079926471-dev"  # hardcoded per file
+
+  KmsKeyArn:
+    Type: String
+    Default: "arn:aws:kms:eu-west-1:641079926471:alias/tesco-ims-dev"  # hardcoded
+
+  # ── Bucket policy principals ──────────────────────────────────────────
+  # THESE ARE HARDCODED here. In the new structure they live in JSON config.
+  # Security team must raise a PR against 68 files to rotate these.
+  BucketAdminArn:
+    Type: String
+    Default: "arn:aws:iam::641079926471:root"                              # hardcoded AccountId
+
+  BucketWriterArn:
+    Type: String
+    Default: "arn:aws:iam::641079926471:role/github-actions-deploy"        # hardcoded
+
+  # ── Storage settings ─────────────────────────────────────────────────
+  EnableVersioning:
+    Type: String
+    Default: "Enabled"                              # duplicated in all 68 files
+    AllowedValues: [Enabled, Suspended]
+
+  LifecycleRetentionDays:
+    Type: Number
+    Default: 90                                     # duplicated in all 68 files
+
+  EnableKmsEncryption:
+    Type: String
+    Default: "true"                                 # duplicated in all 68 files
+    AllowedValues: ["true", "false"]
+
+  EnableAccessLogging:
+    Type: String
+    Default: "false"                                # duplicated in all 68 files
+    AllowedValues: ["true", "false"]
+
+  # ── Governance ───────────────────────────────────────────────────────
+  CostCentre:
+    Type: String
+    Default: "TESCO-IMS-PLATFORM"                  # duplicated in all 68 files
+
+  ManagedBy:
+    Type: String
+    Default: "github-actions"                      # duplicated in all 68 files
+
+  # ── Cross-stack reference ─────────────────────────────────────────────
+  # VPC stack name whose exported VpcId the bucket policy will import.
+  # Default is hardcoded per-file — change the VPC stack name? Edit 68 files.
+  # In the new structure this is a config parameter; no template edit needed.
+  VpcStackName:
+    Type: String
+    Default: "poc-EXISTING-vpc-dev"                # hardcoded per file
+
+Resources:
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketName
+      VersioningConfiguration:
+        Status: !Ref EnableVersioning
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !Ref KmsKeyArn
+            BucketKeyEnabled: true
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireNoncurrentVersions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: !Ref LifecycleRetentionDays
+      Tags:
+        - Key: Name
+          Value: !Ref BucketName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCentre
+          Value: !Ref CostCentre
+        - Key: ManagedBy
+          Value: !Ref ManagedBy
+        - Key: AccountId
+          Value: !Ref AccountId
+
+  S3BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    # Explicit DependsOn ensures CloudFormation creates S3Bucket first.
+    # CloudFormation can infer this from !Ref / !GetAtt below, but explicit
+    # DependsOn is self-documenting: the bucket must exist before its policy.
+    DependsOn: S3Bucket
+    Properties:
+      Bucket: !Ref S3Bucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AdminAccess
+            Effect: Allow
+            Principal:
+              AWS: !Ref BucketAdminArn
+            Action: 's3:*'
+            Resource:
+              - !GetAtt S3Bucket.Arn
+              - !Sub '${S3Bucket.Arn}/*'
+          - Sid: WriterAccess
+            Effect: Allow
+            Principal:
+              AWS: !Ref BucketWriterArn
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:DeleteObject
+              - s3:ListBucket
+            Resource:
+              - !GetAtt S3Bucket.Arn
+              - !Sub '${S3Bucket.Arn}/*'
+          # Cross-stack reference: VpcId imported from the VPC stack.
+          # Denies all S3 requests not originating from the VPC.
+          # Problem: VpcStackName default is hardcoded here — edit 68 files to rename.
+          - Sid: DenyNonVpcAccess
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt S3Bucket.Arn
+              - !Sub '${S3Bucket.Arn}/*'
+            Condition:
+              StringNotEquals:
+                aws:SourceVpc:
+                  Fn::ImportValue: !Sub "${VpcStackName}-VpcId"
+
+Outputs:
+  BucketName:
+    Value: !Ref S3Bucket
+    Export:
+      Name: !Sub "${AWS::StackName}-BucketName"
+  BucketArn:
+    Value: !GetAtt S3Bucket.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-BucketArn"
+  BucketDomainName:
+    Value: !GetAtt S3Bucket.DomainName
+    Export:
+      Name: !Sub "${AWS::StackName}-BucketDomainName"

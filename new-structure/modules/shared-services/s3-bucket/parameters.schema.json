@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TescoIMS::SharedServices::S3Bucket parameters",
+  "required": [
+    "AccountId",
+    "Environment",
+    "BucketName",
+    "KmsKeyArn",
+    "BucketAdminArn",
+    "BucketWriterArn",
+    "EnableVersioning",
+    "LifecycleRetentionDays",
+    "CostCentre",
+    "ManagedBy",
+    "VpcStackName"
+  ],
+  "properties": {
+    "AccountId":              { "type": "string" },
+    "Environment":            { "type": "string", "enum": ["dev", "ppe", "prod"] },
+    "BucketName":             { "type": "string" },
+    "KmsKeyArn":              { "type": "string" },
+    "BucketAdminArn":         { "type": "string" },
+    "BucketWriterArn":        { "type": "string" },
+    "EnableVersioning":       { "type": "string", "enum": ["Enabled", "Suspended"] },
+    "LifecycleRetentionDays": { "type": "string" },
+    "EnableKmsEncryption":    { "type": "string", "enum": ["true", "false"] },
+    "EnableAccessLogging":    { "type": "string", "enum": ["true", "false"] },
+    "CostCentre":             { "type": "string" },
+    "ManagedBy":              { "type": "string" },
+    "VpcStackName":           { "type": "string", "description": "Name of the VPC stack whose VpcId export the bucket policy imports (cross-stack reference)" }
+  }
+}
