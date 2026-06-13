@@ -1,12 +1,12 @@
 """
-Tests for detect_changes.py — 4-layer delta change detection.
+Tests for detect_changes.py -- 4-layer delta change detection.
 
 Verifies all 5 propagation rules:
-  1. module template  → all accounts with config for that module
-  2. _defaults        → all accounts with config for that module
-  3. environments/    → accounts matching env
-  4. ous/             → accounts matching OU prefix
-  5. accounts/        → single account only
+  1. module template  -> all accounts with config for that module
+  2. _defaults        -> all accounts with config for that module
+  3. environments/    -> accounts matching env
+  4. ous/             -> accounts matching OU prefix
+  5. accounts/        -> single account only
 
 Also verifies: deduplication, full mode, empty matrix, account filter.
 """
@@ -39,7 +39,7 @@ def matrix_pairs(output: dict) -> list[tuple]:
     return [(i["account"], i["domain"], i["module"]) for i in output["deploy_matrix"]]
 
 
-# ── Propagation rule 1: module template change ────────────────────────────────
+# -- Propagation rule 1: module template change --------------------------------
 
 class TestModuleTemplateChange:
 
@@ -54,13 +54,13 @@ class TestModuleTemplateChange:
         assert "coll-ppe" in accounts
 
     def test_kms_template_triggers_only_accounts_with_config(self):
-        """Only 'dev' has a security/kms-key config — others should NOT appear."""
+        """Only 'dev' has a security/kms-key config -- others should NOT appear."""
         out = detect("new-structure/modules/security/kms-key/template.yaml")
         pairs = matrix_pairs(out)
         accounts = {p[0] for p in pairs}
         assert "dev" in accounts
         assert "sandbox" not in accounts, \
-            "sandbox has no kms-key config — should not be in matrix"
+            "sandbox has no kms-key config -- should not be in matrix"
 
     def test_s3_template_triggers_only_accounts_with_config(self):
         out = detect("new-structure/modules/shared-services/s3-bucket/template.yaml")
@@ -82,7 +82,7 @@ class TestModuleTemplateChange:
             assert item["module"]  == "kms-key"
 
 
-# ── Propagation rule 2: _defaults change ─────────────────────────────────────
+# -- Propagation rule 2: _defaults change -------------------------------------
 
 class TestDefaultsChange:
 
@@ -102,7 +102,7 @@ class TestDefaultsChange:
         assert "sandbox" not in accounts
 
 
-# ── Propagation rule 5: account config change ─────────────────────────────────
+# -- Propagation rule 5: account config change ---------------------------------
 
 class TestAccountConfigChange:
 
@@ -126,7 +126,7 @@ class TestAccountConfigChange:
         assert pairs[0][0] == "coll-dev"
 
 
-# ── Multi-file changes ────────────────────────────────────────────────────────
+# -- Multi-file changes --------------------------------------------------------
 
 class TestMultiFileChanges:
 
@@ -141,7 +141,7 @@ class TestMultiFileChanges:
         assert ("shared-services", "s3-bucket")  in modules
 
     def test_deduplication_same_module_from_two_sources(self):
-        """Template + defaults change for same module → only one entry per account."""
+        """Template + defaults change for same module -> only one entry per account."""
         out = detect(
             "new-structure/modules/networking/vpc-baseline/template.yaml",
             "new-structure/config/_defaults/networking/vpc-baseline.json",
@@ -164,7 +164,7 @@ class TestMultiFileChanges:
         assert ("shared-services","s3-bucket")    in modules
 
 
-# ── Unrelated file changes ────────────────────────────────────────────────────
+# -- Unrelated file changes ----------------------------------------------------
 
 class TestUnrelatedChanges:
 
@@ -183,7 +183,7 @@ class TestUnrelatedChanges:
         assert out["deploy_matrix"] == []
 
 
-# ── Account filter ────────────────────────────────────────────────────────────
+# -- Account filter ------------------------------------------------------------
 
 class TestAccountFilter:
 
@@ -197,7 +197,7 @@ class TestAccountFilter:
             f"Account filter=dev should yield only dev, got {accounts}"
 
     def test_account_filter_returns_empty_if_account_has_no_config(self):
-        """sandbox has no s3 config — filtering for sandbox on s3 change → empty."""
+        """sandbox has no s3 config -- filtering for sandbox on s3 change -> empty."""
         out = detect(
             "new-structure/modules/shared-services/s3-bucket/template.yaml",
             account="sandbox",
@@ -205,7 +205,7 @@ class TestAccountFilter:
         assert out["has_changes"] is False
 
 
-# ── Full mode ─────────────────────────────────────────────────────────────────
+# -- Full mode -----------------------------------------------------------------
 
 class TestFullMode:
 
@@ -229,7 +229,7 @@ class TestFullMode:
         assert len(pairs) == len(set(pairs)), "Full mode matrix should have no duplicates"
 
 
-# ── Output structure ──────────────────────────────────────────────────────────
+# -- Output structure ----------------------------------------------------------
 
 class TestOutputStructure:
 

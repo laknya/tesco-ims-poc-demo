@@ -1,6 +1,6 @@
 #!/bin/bash
-# Stage 3 — Parity validation: EXISTING == NEW for every module.
-# Auto-discovers modules for the account — same list as stage 2.
+# Stage 3 -- Parity validation: EXISTING == NEW for every module.
+# Auto-discovers modules for the account -- same list as stage 2.
 # Each module pair (EXISTING vs NEW) runs the 5-check parity validator.
 # All modules must pass before cutover is permitted.
 set -e
@@ -12,13 +12,13 @@ REGION="eu-west-1"
 source "$(dirname "$0")/lib/stack-names.sh"
 
 echo ""
-echo "╔══════════════════════════════════════════════════════╗"
-echo "║  STAGE 3 — Parity Validation                         "
-echo "║  Account  : ${ACCOUNT}                               "
-echo "╚══════════════════════════════════════════════════════╝"
+echo "+======================================================+"
+echo "|  STAGE 3 -- Parity Validation                         "
+echo "|  Account  : ${ACCOUNT}                               "
+echo "+======================================================+"
 echo ""
 echo "  Proving: every EXISTING stack == its NEW counterpart."
-echo "  Stack names derived by cfn_stack_name() — same formula as stage 1 + 2."
+echo "  Stack names derived by cfn_stack_name() -- same formula as stage 1 + 2."
 echo ""
 
 pip install boto3 pyyaml -q 2>/dev/null || true
@@ -31,7 +31,7 @@ while IFS= read -r domain_module; do
   OLD_STACK=$(cfn_stack_name "EXISTING" "${DOMAIN}" "${MODULE}" "${ACCOUNT}")
   NEW_STACK=$(cfn_stack_name "NEW"      "${DOMAIN}" "${MODULE}" "${ACCOUNT}")
 
-  echo "► Checking parity: ${domain_module}"
+  echo ">> Checking parity: ${domain_module}"
   echo "    EXISTING : ${OLD_STACK}"
   echo "    NEW      : ${NEW_STACK}"
 
@@ -39,30 +39,30 @@ while IFS= read -r domain_module; do
        --old-stack "${OLD_STACK}" \
        --new-stack "${NEW_STACK}" \
        --region    "${REGION}"; then
-    echo "  ✅  ${domain_module} parity confirmed"
+    echo "  [OK]  ${domain_module} parity confirmed"
   else
-    echo "  ❌  ${domain_module} parity FAILED"
+    echo "  [FAIL]  ${domain_module} parity FAILED"
     FAILED_MODULES+=("${domain_module}")
   fi
   echo ""
 
 done < <(discover_new_modules "${ACCOUNT}")
 
-# ── Summary ───────────────────────────────────────────────────────────
+# -- Summary -----------------------------------------------------------
 if [ ${#FAILED_MODULES[@]} -ne 0 ]; then
-  echo "╔══════════════════════════════════════════════════════╗"
-  echo "║  ❌  PARITY FAILED (${ACCOUNT})                      "
+  echo "+======================================================+"
+  echo "|  [FAIL]  PARITY FAILED (${ACCOUNT})                      "
   for m in "${FAILED_MODULES[@]}"; do
-    printf "║     %-48s ❌\n" "${m}"
+    printf "|     %-48s [FAIL]\n" "${m}"
   done
-  echo "║  Fix mismatches before proceeding to cutover.        "
-  echo "╚══════════════════════════════════════════════════════╝"
+  echo "|  Fix mismatches before proceeding to cutover.        "
+  echo "+======================================================+"
   exit 1
 fi
 
-echo "╔══════════════════════════════════════════════════════╗"
-echo "║  ✅  ALL PARITY CHECKS PASSED (${ACCOUNT})            "
-echo "╚══════════════════════════════════════════════════════╝"
+echo "+======================================================+"
+echo "|  [OK]  ALL PARITY CHECKS PASSED (${ACCOUNT})            "
+echo "+======================================================+"
 echo ""
 while IFS= read -r domain_module; do
   DOMAIN="${domain_module%/*}"

@@ -41,7 +41,7 @@ ALL_YAML_FILES = sorted([
 ])
 
 
-# ── cfn-lint ──────────────────────────────────────────────────────────────────
+# -- cfn-lint ------------------------------------------------------------------
 
 class TestCfnLint:
 
@@ -82,14 +82,14 @@ class TestCfnLint:
         """
         CloudFormation enforces a 1024-byte limit on the template Description field.
         cfn-lint only checks character count and misses multi-byte Unicode chars
-        (e.g. box-drawing ─ is 3 bytes). This test catches the gap before any AWS call.
+        (e.g. box-drawing - is 3 bytes). This test catches the gap before any AWS call.
         """
         import re
         content = Path(template).read_text(encoding="utf-8")
         m = re.search(r'^Description\s*:\s*[>|]?-?\s*\n?((?:[ \t].+\n?)*|(?![\n]).+)',
                       content, re.MULTILINE)
         if not m:
-            return  # no Description field — nothing to check
+            return  # no Description field -- nothing to check
         # Extract value: strip key, strip leading whitespace from block scalars
         block = content[m.start():]
         next_key = re.search(r'\n(?:Parameters|Metadata|Resources|Outputs|Mappings|Conditions)\s*:', block)
@@ -98,8 +98,8 @@ class TestCfnLint:
         value = re.sub(r'^[ \t]{1,2}', '', value, flags=re.MULTILINE)
         byte_len = len(value.encode("utf-8"))
         assert byte_len <= 1024, (
-            f"{template}: Description is {byte_len} bytes — exceeds CloudFormation's 1024-byte limit. "
-            f"Shorten the text (watch for Unicode box-drawing chars — each '─' costs 3 bytes)."
+            f"{template}: Description is {byte_len} bytes -- exceeds CloudFormation's 1024-byte limit. "
+            f"Shorten the text (watch for Unicode box-drawing chars -- each '-' costs 3 bytes)."
         )
 
     def test_existing_templates_have_hardcoded_defaults(self):
@@ -157,7 +157,7 @@ class TestCfnLint:
         assert "Export:" in content
 
 
-# ── JSON config syntax ────────────────────────────────────────────────────────
+# -- JSON config syntax --------------------------------------------------------
 
 class TestJsonSyntax:
 
@@ -197,7 +197,7 @@ class TestJsonSyntax:
             assert isinstance(data, dict), f"{cfg.name}: _defaults config should be a dict"
 
 
-# ── IAM ARN hygiene ──────────────────────────────────────────────────────────
+# -- IAM ARN hygiene ----------------------------------------------------------
 
 class TestIamArnHygiene:
 
@@ -215,7 +215,7 @@ class TestIamArnHygiene:
                 for placeholder in self.PLACEHOLDER_ROLES:
                     assert placeholder not in val, (
                         f"{params_file.name}: ParameterValue '{val}' references "
-                        f"placeholder role '{placeholder}' — update to the real role ARN"
+                        f"placeholder role '{placeholder}' -- update to the real role ARN"
                     )
 
     def test_no_placeholder_role_arns_in_account_configs(self):
@@ -227,11 +227,11 @@ class TestIamArnHygiene:
                 for placeholder in self.PLACEHOLDER_ROLES:
                     assert placeholder not in str(val), (
                         f"{cfg.relative_to(REPO_ROOT)}: '{key}' references "
-                        f"placeholder role '{placeholder}' — update to the real role ARN"
+                        f"placeholder role '{placeholder}' -- update to the real role ARN"
                     )
 
 
-# ── YAML syntax and registry structure ───────────────────────────────────────
+# -- YAML syntax and registry structure ---------------------------------------
 
 class TestYamlAndRegistry:
 
@@ -274,7 +274,7 @@ class TestYamlAndRegistry:
                 pytest.fail(f"Invalid YAML in {yaml_file}: {e}")
 
 
-# ── Stack naming convention ───────────────────────────────────────────────────
+# -- Stack naming convention ---------------------------------------------------
 
 class TestStackNamingConvention:
 
@@ -296,7 +296,7 @@ class TestStackNamingConvention:
             content = script.read_text()
             for pattern in forbidden_patterns:
                 assert pattern not in content, \
-                    f"{script.name}: found hardcoded old-style stack name '{pattern}' — use cfn_stack_name()"
+                    f"{script.name}: found hardcoded old-style stack name '{pattern}' -- use cfn_stack_name()"
 
     def test_cfn_stack_name_formula(self):
         """Verify the naming formula produces the expected output."""

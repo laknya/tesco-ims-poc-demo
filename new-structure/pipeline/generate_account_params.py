@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-TESCO IMS Landing Zone — Registry-to-Parameters Generator
+TESCO IMS Landing Zone -- Registry-to-Parameters Generator
 Repo: git@github.com:laknya/tesco-ims-poc-demo.git
 
 Reads config/_accounts-registry.yaml and generates one JSON parameter
 file per account under config/generated/account-metadata/.
 
-Generated files are gitignored — they are recreated at deploy time
+Generated files are gitignored -- they are recreated at deploy time
 from the single source of truth (the registry).
 
 Usage:
@@ -30,7 +30,7 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\nGenerating parameters from registry: {REGISTRY}")
-    print(f"{'─'*52}")
+    print(f"{'-'*52}")
 
     for account_key, account_data in accounts.items():
         params = [
@@ -44,12 +44,12 @@ def main():
 
         output_file = out_dir / f"{account_key}.json"
         output_file.write_text(json.dumps(params, indent=2))
-        print(f"  ✅ {account_key:<30} → {output_file}")
+        print(f"  [OK] {account_key:<30} -> {output_file}")
 
-    print(f"{'─'*52}")
+    print(f"{'-'*52}")
     print(f"  Generated {len(accounts)} parameter files from {len(accounts)}-entry registry.")
     print(f"  Old way: {len(accounts)} separate _account.yaml files (manual, error-prone)")
-    print(f"  New way: 1 registry → auto-generate at deploy time\n")
+    print(f"  New way: 1 registry -> auto-generate at deploy time\n")
 
 
 if __name__ == "__main__":

@@ -1,11 +1,11 @@
 """
 Tests for check_module_versions.py (hash integrity) and validate_schema.py.
 
-check_module_versions — verifies the SHA256 hash in version.json matches the
+check_module_versions -- verifies the SHA256 hash in version.json matches the
 actual template.yaml on disk. CI blocks merges that change a template without
 bumping the version.
 
-validate_schema — validates each account's module config JSON against the
+validate_schema -- validates each account's module config JSON against the
 module's parameters.schema.json (required fields, enum values).
 """
 import hashlib
@@ -19,7 +19,7 @@ import pytest
 from conftest import REPO_ROOT, MODULES_DIR, CONFIG_DIR, python
 
 
-# ── Module version integrity ──────────────────────────────────────────────────
+# -- Module version integrity --------------------------------------------------
 
 class TestModuleVersionIntegrity:
 
@@ -44,11 +44,11 @@ class TestModuleVersionIntegrity:
 
         actual_hash = hashlib.sha256(template.read_bytes()).hexdigest()
         stored_raw  = json.loads(version_file.read_text())["template_hash"]
-        # version.json stores hash as "sha256:<hex>" — strip prefix for comparison
+        # version.json stores hash as "sha256:<hex>" -- strip prefix for comparison
         stored_hash = stored_raw.removeprefix("sha256:")
 
         assert actual_hash == stored_hash, \
-            f"{domain}/{module}: template hash mismatch — run check_module_versions.py --update"
+            f"{domain}/{module}: template hash mismatch -- run check_module_versions.py --update"
 
     def test_tampered_template_detected(self, tmp_path, monkeypatch):
         """If template changes without version bump, check must fail."""
@@ -63,7 +63,7 @@ class TestModuleVersionIntegrity:
 
         # Patch MODULES_DIR in the check script by running it from the tmp dir
         result = python("check_module_versions.py")
-        # The REAL modules dir is intact so this passes — we verify the concept
+        # The REAL modules dir is intact so this passes -- we verify the concept
         # by checking the hash manually
         real_hash = hashlib.sha256(
             (MODULES_DIR / "networking" / "vpc-baseline" / "template.yaml").read_bytes()
@@ -84,7 +84,7 @@ class TestModuleVersionIntegrity:
         for version_file in sorted(MODULES_DIR.rglob("version.json")):
             data = json.loads(version_file.read_text())
             assert data["template_hash"] != "placeholder", \
-                f"{version_file}: template_hash is still 'placeholder' — run --update"
+                f"{version_file}: template_hash is still 'placeholder' -- run --update"
 
     def test_type_name_follows_convention(self):
         """type_name must follow TescoIMS::{Domain}::{Module} PascalCase format."""
@@ -98,7 +98,7 @@ class TestModuleVersionIntegrity:
                 f"{version_file}: type_name must have 3 parts (Org::Domain::Module)"
 
 
-# ── Schema validation ─────────────────────────────────────────────────────────
+# -- Schema validation ---------------------------------------------------------
 
 class TestSchemaValidation:
 

@@ -1,17 +1,17 @@
 #!/bin/bash
-# ─────────────────────────────────────────────────────────────────────────────
-#  Stack naming library — source this file from every stage script.
-#  Compatible with bash 3.2+ (macOS default) — no associative arrays.
+# -----------------------------------------------------------------------------
+#  Stack naming library -- source this file from every stage script.
+#  Compatible with bash 3.2+ (macOS default) -- no associative arrays.
 #
 #  WHY this exists
-#  ───────────────
+#  ---------------
 #  Without this library every stage script contained a manually typed shorthand
 #  ("vpc", "kms", "s3") that had no relationship to the actual module path on
 #  disk (networking/vpc-baseline, security/kms-key, …). Adding a 4th module
 #  required editing all 5 stage scripts by hand.
 #
 #  NAMING FORMULA
-#  ──────────────
+#  --------------
 #  CloudFormation stack name: poc-{STAGE}-{domain}-{module}-{account}
 #
 #  Examples
@@ -22,18 +22,18 @@
 #    poc-EXISTING-shared-services-s3-bucket-dev
 #    poc-NEW-shared-services-s3-bucket-dev
 #
-#  The formula is identical for EXISTING and NEW stacks — only the stage token
-#  differs. Parity validation just swaps EXISTING→NEW for the same module.
+#  The formula is identical for EXISTING and NEW stacks -- only the stage token
+#  differs. Parity validation just swaps EXISTING->NEW for the same module.
 #
 #  NOTE on "StackSets" vs "Stacks"
-#  ─────────────────────────────────
+#  ---------------------------------
 #  This POC uses individual CloudFormation STACKS (single account, eu-west-1).
 #  In production, AWS CloudFormation STACKSETS would be used to fan the same
 #  template out across all accounts and regions from a management account in one
 #  operation. The StackSet name follows the same formula without the account
 #  suffix:  poc-NEW-{domain}-{module}
 #  Each StackSet instance is identified by (account-id, region).
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 # cfn_stack_name STAGE DOMAIN MODULE ACCOUNT
 #   Returns the CloudFormation stack name for a given module deployment.
@@ -52,7 +52,7 @@ cfn_stack_name() {
 # discover_new_modules ACCOUNT
 #   Prints one "domain/module" line per module configured for ACCOUNT by
 #   scanning new-structure/config/accounts/{account}/**/*.json.
-#   Stage scripts loop over this output — no module names are hardcoded.
+#   Stage scripts loop over this output -- no module names are hardcoded.
 #
 #   Example output for account=dev:
 #     networking/vpc-baseline
@@ -86,9 +86,9 @@ discover_existing_modules() {
     echo "ERROR: No existing-structure found for account '${account}' under ${base}" >&2
     return 1
   fi
-  # VPC must be first — S3 template uses Fn::ImportValue from the VPC stack.
+  # VPC must be first -- S3 template uses Fn::ImportValue from the VPC stack.
   # Explicit ordering here prevents a first-run failure when templates would
-  # otherwise deploy alphabetically (kms → s3 → vpc).
+  # otherwise deploy alphabetically (kms -> s3 -> vpc).
   for abbrev in vpc kms s3; do
     local template="${base}/${abbrev}-template.yaml"
     [ -f "${template}" ] || continue
@@ -98,7 +98,7 @@ discover_existing_modules() {
 
 # _module_for_abbrev ABBREV
 #   Maps a legacy template abbreviation to its canonical domain/module path.
-#   This is the single registration point for the legacy→new module mapping.
+#   This is the single registration point for the legacy->new module mapping.
 #   Adding a 4th module here is the only change needed across all stage scripts.
 _module_for_abbrev() {
   case "$1" in
@@ -114,7 +114,7 @@ _module_for_abbrev() {
 }
 
 # _abbrev_for_module DOMAIN/MODULE
-#   Reverse of _module_for_abbrev — used by stages 1 and 5 to find the
+#   Reverse of _module_for_abbrev -- used by stages 1 and 5 to find the
 #   params file and template file for a given domain/module.
 _abbrev_for_module() {
   case "$1" in

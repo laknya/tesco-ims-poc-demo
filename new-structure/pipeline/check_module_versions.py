@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TESCO IMS — Module Version Integrity Check
+TESCO IMS -- Module Version Integrity Check
 
 Validates that every module's version.json is in sync with its template.yaml.
 The stored template_hash must match the current SHA256 of template.yaml.
@@ -43,17 +43,17 @@ def check(update: bool = False) -> bool:
         return False
 
     all_ok = True
-    print(f"\n{'─'*60}")
+    print(f"\n{'-'*60}")
     print(f"  Module Version Integrity Check")
     print(f"  {'Module':<35} {'Stored':<12} {'Status'}")
-    print(f"{'─'*60}")
+    print(f"{'-'*60}")
 
     for vf in version_files:
         module_dir = vf.parent
         template = module_dir / "template.yaml"
 
         if not template.exists():
-            print(f"  ⚠️  {module_dir}: version.json present but template.yaml missing")
+            print(f"  [WARN]  {module_dir}: version.json present but template.yaml missing")
             all_ok = False
             continue
 
@@ -65,13 +65,13 @@ def check(update: bool = False) -> bool:
         module_label = f"{module_dir.parent.name}/{module_dir.name}"
 
         if current_hash == stored_hash:
-            print(f"  ✅  {module_label:<35} v{version:<11} hash OK")
+            print(f"  [OK]  {module_label:<35} v{version:<11} hash OK")
         elif update:
             meta["template_hash"] = current_hash
             vf.write_text(json.dumps(meta, indent=2) + "\n")
-            print(f"  🔄  {module_label:<35} v{version:<11} hash UPDATED")
+            print(f"  [UPDATED]  {module_label:<35} v{version:<11} hash UPDATED")
         else:
-            print(f"  ❌  {module_label:<35} v{version:<11} HASH MISMATCH")
+            print(f"  [FAIL]  {module_label:<35} v{version:<11} HASH MISMATCH")
             print(f"       template.yaml was changed without bumping version.json")
             print(f"       Stored : {stored_hash[:30]}...")
             print(f"       Current: {current_hash[:30]}...")
@@ -87,10 +87,10 @@ def check(update: bool = False) -> bool:
             print(f"           --schema-handler-package s3://tesco-ims-cfn-modules/{module_label}-v?.?.?.zip")
             all_ok = False
 
-    print(f"{'─'*60}")
+    print(f"{'-'*60}")
 
     if all_ok:
-        print(f"\n  All module versions are in sync. ✅\n")
+        print(f"\n  All module versions are in sync. [OK]\n")
     else:
         print(f"\n  Version check FAILED. PR cannot be merged until all modules are in sync.\n")
 
@@ -99,17 +99,17 @@ def check(update: bool = False) -> bool:
 
 def list_versions():
     version_files = find_modules()
-    print(f"\n{'─'*60}")
+    print(f"\n{'-'*60}")
     print(f"  Registered Module Versions (local registry)")
     print(f"  {'Module':<35} {'Version':<10} {'Type Name'}")
-    print(f"{'─'*60}")
+    print(f"{'-'*60}")
     for vf in version_files:
         meta = json.loads(vf.read_text())
         module_label = f"{vf.parent.parent.name}/{vf.parent.name}"
-        print(f"  {'✅' if meta.get('status')=='default' else '  '}"
+        print(f"  {'[OK]' if meta.get('status')=='default' else '  '}"
               f"  {module_label:<35} v{meta.get('version','?'):<9} {meta.get('type_name','')}")
-    print(f"{'─'*60}")
-    print(f"\n  (✅ = current default version)\n")
+    print(f"{'-'*60}")
+    print(f"\n  ([OK] = current default version)\n")
 
 
 if __name__ == "__main__":

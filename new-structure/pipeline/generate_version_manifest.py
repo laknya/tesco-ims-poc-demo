@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-TESCO IMS — Version Manifest Generator
+TESCO IMS -- Version Manifest Generator
 
 Produces a JSON manifest showing which module version each account will use on next deploy.
 This is the equivalent of querying the CFN Registry for the default version per account.
 
 In native CFN Registry terms:
   aws cloudformation describe-type --type MODULE --type-name TescoIMS::Networking::VpcBaseline
-  → shows the current default version ARN
+  -> shows the current default version ARN
 
 Here we produce the same picture from our local version.json files + account configs.
 
@@ -99,13 +99,13 @@ def generate():
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_PATH.write_text(json.dumps(manifest, indent=2) + "\n")
 
-    print(f"\n{'─'*60}")
+    print(f"\n{'-'*60}")
     print(f"  Version Manifest")
     print(f"  {'Module':<35} {'Version':<10} {'Accounts'}")
-    print(f"{'─'*60}")
+    print(f"{'-'*60}")
     for mk, mv in manifest["modules"].items():
         print(f"  {mk:<35} v{mv['version']:<9} {', '.join(mv['deployed_to']) or '(none)'}")
-    print(f"{'─'*60}")
+    print(f"{'-'*60}")
     print(f"\n  Written to: {OUTPUT_PATH}\n")
 
     return manifest
