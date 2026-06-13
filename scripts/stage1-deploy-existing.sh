@@ -32,23 +32,26 @@ fi
 DEPLOYED=()
 
 # -- Auto-discover and deploy every module in existing-structure/{account}/ --
+# Template files follow the naming convention: {domain}__{module}-template.yaml
+# Adding a new module requires only two files -- no script changes needed.
 while IFS= read -r domain_module; do
   DOMAIN="${domain_module%/*}"    # networking
   MODULE="${domain_module#*/}"    # vpc-baseline
 
-  ABBREV=$(_abbrev_for_module "${domain_module}")
-
-  TEMPLATE="existing-structure/${ACCOUNT}/${ABBREV}-template.yaml"
-  PARAMS="existing-structure/${ACCOUNT}/${ABBREV}-params.json"
+  TEMPLATE="existing-structure/${ACCOUNT}/${DOMAIN}__${MODULE}-template.yaml"
+  PARAMS="existing-structure/${ACCOUNT}/${DOMAIN}__${MODULE}-params.json"
   STACK=$(cfn_stack_name "EXISTING" "${DOMAIN}" "${MODULE}" "${ACCOUNT}")
 
   echo ">> Deploying ${domain_module}: ${STACK}"
   echo "    template : ${TEMPLATE}"
   echo "    params   : ${PARAMS}"
 
+  # Detect whether this template creates IAM resources (requires capabilities).
+  # Generic check: any AWS::IAM:: resource type triggers CAPABILITY_NAMED_IAM.
   EXTRA_CAPS=""
-  # KMS key template creates an IAM alias -- needs CAPABILITY_NAMED_IAM
-  [[ "${ABBREV}" == "kms" ]] && EXTRA_CAPS="--capabilities CAPABILITY_NAMED_IAM"
+  if grep -q "Type: AWS::IAM::" "${TEMPLATE}" 2>/dev/null; then
+    EXTRA_CAPS="--capabilities CAPABILITY_NAMED_IAM"
+  fi
 
   # shellcheck disable=SC2086
   aws cloudformation deploy \

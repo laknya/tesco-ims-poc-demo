@@ -5,7 +5,7 @@ TESCO IMS -- Module Version Integrity Check
 Validates that every module's version.json is in sync with its template.yaml.
 The stored template_hash must match the current SHA256 of template.yaml.
 
-If the hashes differ the module template was changed without bumping version.json —
+If the hashes differ the module template was changed without bumping version.json --
 this is a breaking-change gate in CI (blocks PRs).
 
 Usage:

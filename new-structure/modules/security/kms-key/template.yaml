@@ -1,16 +1,13 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: |
   TESCO IMS - KMS Key Baseline (MASTER TEMPLATE)
-  ──────────────────────────────────────────────────────────────────────
   ONE file. Deployed to ALL accounts via parameters.
   Replaces: existing-structure/dev/kms-template.yaml
             existing-structure/coll-dev/kms-template.yaml
             ... (66 more per-account copies)
-
   Key policy principals come from the 4-layer JSON config system.
-  Security team owns:  config/accounts/{account}/security/kms-key.json
-  Platform team owns:  this template (unchanged across accounts)
-  ──────────────────────────────────────────────────────────────────────
+  Security team owns: config/accounts/{account}/security/kms-key.json
+  Platform team owns: this template (unchanged across accounts)
 
 Parameters:
   # --- Account Identity ---
@@ -37,7 +34,7 @@ Parameters:
     AllowedValues: ["true", "false"]
 
   # --- Policy: Who can administer and use this key ---
-  # These are JSON parameters — sourced from config/accounts/{account}/security/kms-key.json
+  # These are JSON parameters -- sourced from config/accounts/{account}/security/kms-key.json
   # Security team PRs against kms-key.json to change policy.
   # Platform team PRs against this template to change key behaviour.
   KeyAdminArn:
@@ -56,6 +53,14 @@ Parameters:
   ManagedBy:
     Type: String
     Default: "github-actions"
+
+  KeyAliasName:
+    Type: String
+    Description: >-
+      Full alias name for this key (e.g. alias/tesco-ims-dev-platform-new).
+      Must be unique within the account. The new-structure stack uses a
+      -new suffix to coexist with the existing-structure stack during migration.
+      Supplied per-account via accounts/{account}/security/kms-key.json.
 
 Resources:
   KMSKey:
@@ -99,7 +104,7 @@ Resources:
   KMSAlias:
     Type: AWS::KMS::Alias
     Properties:
-      AliasName: !Sub "alias/tesco-ims-${Environment}-platform"
+      AliasName: !Ref KeyAliasName
       TargetKeyId: !Ref KMSKey
 
 Outputs:

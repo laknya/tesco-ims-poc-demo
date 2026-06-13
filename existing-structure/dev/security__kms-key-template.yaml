@@ -1,17 +1,17 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: |
-  DEV KMS Key — Development Account
-  ──────────────────────────────────────────────────────────────────────
+  DEV KMS Key -- Development Account
+  ----------------------------------------------------------------------
   THIS IS THE OLD STRUCTURE.
   This file is one of 68 nearly-identical copies in the repository:
-    dev/kms-template.yaml           ← YOU ARE HERE
-    coll-dev/kms-template.yaml      ← identical structure, different defaults
-    coll-ppe/kms-template.yaml      ← identical structure, different defaults
+    dev/kms-template.yaml           <- YOU ARE HERE
+    coll-dev/kms-template.yaml      <- identical structure, different defaults
+    coll-ppe/kms-template.yaml      <- identical structure, different defaults
     ... (65 more copies)
 
-  Problem: Change an allowed principal → edit 68 files.
-           Add a new role to key policy → touch 68 templates.
-  ──────────────────────────────────────────────────────────────────────
+  Problem: Change an allowed principal -> edit 68 files.
+           Add a new role to key policy -> touch 68 templates.
+  ----------------------------------------------------------------------
 
 Parameters:
   AccountId:
@@ -34,7 +34,7 @@ Parameters:
     Type: String
     Default: "true"                # duplicated in all 68 files
 
-  # ── Policy principals ─────────────────────────────────────────────────
+  # -- Policy principals -------------------------------------------------
   # THESE ARE HARDCODED here. In the new structure they live in JSON config.
   KeyAdminArn:
     Type: String
@@ -44,7 +44,7 @@ Parameters:
     Type: String
     Default: "arn:aws:iam::641079926471:role/github-actions-deploy"  # hardcoded
 
-  # ── Governance ───────────────────────────────────────────────────────
+  # -- Governance -------------------------------------------------------
   CostCentre:
     Type: String
     Default: "TESCO-IMS-PLATFORM"  # duplicated in all 68 files

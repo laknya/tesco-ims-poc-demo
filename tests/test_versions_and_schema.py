@@ -138,14 +138,45 @@ class TestSchemaValidation:
                 assert field in data.get("properties", {}), \
                     f"{schema_file}: required field '{field}' missing from properties"
 
-    def test_s3_schema_includes_kms_key_arn(self):
-        """KmsKeyArn must be required in the S3 module schema (encryption dependency)."""
+    def test_s3_schema_requires_kms_stack_name(self):
+        """KmsStackName must be required in the S3 module schema.
+        The new S3 template uses Fn::ImportValue from KmsStackName to get the
+        KMS key ARN -- no literal ARN needed in config any more.
+        """
         schema = json.loads(
             (MODULES_DIR / "shared-services" / "s3-bucket" / "parameters.schema.json")
             .read_text()
         )
-        assert "KmsKeyArn" in schema["required"], \
-            "KmsKeyArn must be required in s3-bucket schema (bucket encryption)"
+        assert "KmsStackName" in schema["required"], \
+            "KmsStackName must be required in s3-bucket schema (encryption key via cross-stack import)"
+
+    def test_kms_schema_includes_key_alias_name(self):
+        """KeyAliasName must be required in the KMS module schema.
+        The alias name is per-account so existing and new stacks can coexist
+        without triggering AWS::EarlyValidation::ResourceExistenceCheck conflicts.
+        """
+        schema = json.loads(
+            (MODULES_DIR / "security" / "kms-key" / "parameters.schema.json")
+            .read_text()
+        )
+        assert "KeyAliasName" in schema["required"], \
+            "KeyAliasName must be required in kms-key schema (alias name must be unique per account)"
+        assert "KeyAliasName" in schema["properties"], \
+            "KeyAliasName must be in kms-key schema properties"
+
+    def test_s3_schema_includes_kms_stack_name(self):
+        """KmsStackName must be required in the S3 module schema.
+        The CI deploy script detects any *StackName param and waits for that
+        stack before deploying, ensuring KMS alias exists at S3 deploy time.
+        """
+        schema = json.loads(
+            (MODULES_DIR / "shared-services" / "s3-bucket" / "parameters.schema.json")
+            .read_text()
+        )
+        assert "KmsStackName" in schema["required"], \
+            "KmsStackName must be required in s3-bucket schema (ordering dependency on KMS)"
+        assert "KmsStackName" in schema["properties"], \
+            "KmsStackName must be in s3-bucket schema properties"
 
     def test_s3_schema_includes_vpc_stack_name(self):
         """VpcStackName must be required in the S3 module schema (cross-stack VPC reference)."""

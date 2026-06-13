@@ -17,9 +17,6 @@ Parameters:
     Type: String
   BucketName:
     Type: String
-  KmsKeyArn:
-    Type: String
-    Description: ARN or alias of the KMS key used for bucket encryption
   BucketAdminArn:
     Type: String
     Description: IAM ARN granted full s3:* on this bucket (security team config)
@@ -43,7 +40,17 @@ Parameters:
       Used in the DenyNonVpcAccess bucket policy statement so that S3 only
       accepts requests originating from the account VPC.
       Supplied per-account via accounts/{account}/shared-services/s3-bucket.json
-      — the 4-layer resolver provides the correct stack name automatically.
+      -- the 4-layer resolver provides the correct stack name automatically.
+
+  KmsStackName:
+    Type: String
+    Description: >-
+      Name of the KMS stack that must exist before this stack deploys.
+      The CI deploy script detects any parameter ending in StackName and
+      waits for that stack to reach CREATE_COMPLETE before proceeding.
+      This ensures the KMS key alias referenced by KmsKeyArn exists at
+      deploy time and passes AWS::EarlyValidation::ResourceExistenceCheck.
+      Supplied per-account via accounts/{account}/shared-services/s3-bucket.json.
 
 Resources:
   S3Bucket:
@@ -56,7 +63,8 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: aws:kms
-              KMSMasterKeyID: !Ref KmsKeyArn
+              KMSMasterKeyID:
+                Fn::ImportValue: !Sub "${KmsStackName}-KeyArn"
             BucketKeyEnabled: true
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
@@ -141,7 +149,7 @@ Outputs:
     Value: !GetAtt S3Bucket.DomainName
     Export:
       Name: !Sub "${AWS::StackName}-BucketDomainName"
-  # ── How downstream stacks consume this stack's outputs ──────────────────
+  # -- How downstream stacks consume this stack's outputs ------------------
   # A downstream stack (EC2, ECS, Lambda) can reference this bucket like this:
   #
   #   Parameters:
@@ -156,5 +164,5 @@ Outputs:
   #             BUCKET_ARN:
   #               Fn::ImportValue: !Sub "${S3StackName}-BucketArn"
   #
-  # The VPC stack is referenced the same way (VpcStackName → VpcId, SubnetIds, etc.)
-  # The resolver supplies the correct stack name per account — no hardcoding needed.
+  # The VPC stack is referenced the same way (VpcStackName -> VpcId, SubnetIds, etc.)
+  # The resolver supplies the correct stack name per account -- no hardcoding needed.

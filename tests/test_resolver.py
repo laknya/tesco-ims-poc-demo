@@ -123,7 +123,7 @@ class TestLayerPrecedence:
                 assert params[key] == account_s3[key]
 
 
-# -- All account × module combinations ----------------------------------------
+# -- All account x module combinations ----------------------------------------
 
 class TestAllAccountModuleCombinations:
 
@@ -141,14 +141,14 @@ class TestAllAccountModuleCombinations:
 
     @pytest.mark.parametrize("account,domain,module,min_params", [
         ("dev", "networking",     "vpc-baseline", 10),
-        ("dev", "security",       "kms-key",       9),  # KMS has 9 params by design
-        ("dev", "shared-services","s3-bucket",    12),
+        ("dev", "security",       "kms-key",      10),  # 9 base + KeyAliasName
+        ("dev", "shared-services","s3-bucket",    12),  # removed KmsKeyArn, added KmsStackName
     ])
     def test_param_count_meets_minimum(self, account, domain, module, min_params):
         """All modules should resolve the expected minimum number of params."""
         params = resolve(account, domain, module, f"/tmp/test-count-{account}-{module}.json")
         assert len(params) >= min_params, \
-            f"Expected ≥{min_params} params, got {len(params)} for {account}/{domain}/{module}"
+            f"Expected >={min_params} params, got {len(params)} for {account}/{domain}/{module}"
 
 
 # -- Required parameters per module -------------------------------------------
@@ -166,15 +166,16 @@ class TestRequiredParameters:
     def test_kms_required_params_present(self):
         required = ["AccountId", "Environment", "KeyDescription",
                     "KeyAdminArn", "KeyUsageArn",
-                    "EnableKeyRotation", "DeletionWindowInDays"]
+                    "EnableKeyRotation", "DeletionWindowInDays",
+                    "KeyAliasName"]
         params = params_as_dict(resolve("dev", "security", "kms-key"))
         for key in required:
             assert key in params, f"Required KMS param '{key}' missing from resolved output"
 
     def test_s3_required_params_present(self):
-        required = ["AccountId", "Environment", "BucketName", "KmsKeyArn",
+        required = ["AccountId", "Environment", "BucketName",
                     "BucketAdminArn", "BucketWriterArn", "EnableVersioning",
-                    "LifecycleRetentionDays", "VpcStackName"]
+                    "LifecycleRetentionDays", "VpcStackName", "KmsStackName"]
         params = params_as_dict(resolve("dev", "shared-services", "s3-bucket"))
         for key in required:
             assert key in params, f"Required S3 param '{key}' missing from resolved output"
@@ -184,24 +185,44 @@ class TestRequiredParameters:
 
 class TestCrossStackReference:
 
-    def test_s3_kms_key_arn_present(self):
-        """KmsKeyArn must be set -- S3 bucket encryption depends on it."""
+    def test_s3_kms_stack_name_is_set(self):
+        """KmsStackName must be set -- S3 bucket encryption key comes from this stack.
+        The new S3 template uses Fn::ImportValue: !Sub "${KmsStackName}-KeyArn"
+        so the KMS stack must exist before S3 deploys.
+        """
         params = params_as_dict(resolve("dev", "shared-services", "s3-bucket"))
-        kms_arn = params.get("KmsKeyArn", "")
-        assert kms_arn.startswith("arn:aws:kms:"), \
-            f"KmsKeyArn should be a valid KMS ARN, got '{kms_arn}'"
+        kms_stack = params.get("KmsStackName", "")
+        assert kms_stack.startswith("poc-NEW-"), \
+            f"KmsStackName '{kms_stack}' must point to a new-structure KMS stack"
 
     def test_s3_kms_alias_matches_kms_stack_output(self):
-        """KmsKeyArn alias must match the alias name created by the KMS template."""
+        """KeyAliasName in the KMS stack must carry the -new suffix.
+        This ensures the KMS alias is unique and does not conflict with the
+        existing-structure stack alias during side-by-side migration.
+        """
+        params = params_as_dict(resolve("dev", "security", "kms-key"))
+        alias = params.get("KeyAliasName", "")
+        assert alias.endswith("-new"), \
+            (f"KeyAliasName '{alias}' must end with -new "
+             "to avoid alias conflict with the existing-structure KMS stack")
+
+    def test_s3_kms_stack_name_matches_naming_formula(self):
+        """
+        KmsStackName must resolve to the correct KMS stack for the account.
+        The CI deploy script uses any *StackName param to order deployments --
+        KmsStackName triggers a wait so KMS is ready before S3 deploys.
+        Without this, S3 early validation fails because the KMS alias does not exist.
+        """
         params = params_as_dict(resolve("dev", "shared-services", "s3-bucket"))
-        kms_arn = params.get("KmsKeyArn", "")
-        assert "tesco-ims-dev-platform" in kms_arn, \
-            f"KmsKeyArn '{kms_arn}' must reference alias/tesco-ims-dev-platform (set by KMS template)"
+        kms_stack = params.get("KmsStackName", "")
+        assert kms_stack == "poc-NEW-security-kms-key-dev", \
+            (f"KmsStackName '{kms_stack}' does not match the expected KMS stack name. "
+             "S3 early validation will fail if the KMS alias does not exist at deploy time.")
 
     def test_s3_vpc_stack_name_matches_naming_formula(self):
         """
         VpcStackName must resolve to the correct VPC stack for the account.
-        The S3 template imports VpcId via Fn::ImportValue using this name —
+        The S3 template imports VpcId via Fn::ImportValue using this name --
         it must match the stack name that stage2 actually creates.
         """
         params = params_as_dict(resolve("dev", "shared-services", "s3-bucket"))

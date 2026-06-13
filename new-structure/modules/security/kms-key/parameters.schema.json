@@ -8,7 +8,8 @@
     "Environment",
     "KeyDescription",
     "KeyAdminArn",
-    "KeyUsageArn"
+    "KeyUsageArn",
+    "KeyAliasName"
   ],
   "properties": {
     "AccountId":            { "type": "string", "pattern": "^[0-9]{12}$" },
@@ -18,6 +19,7 @@
     "EnableKeyRotation":    { "type": "string", "enum": ["true","false"], "default": "true" },
     "KeyAdminArn":          { "type": "string", "description": "Full ARN of admin principal (kms:*)" },
     "KeyUsageArn":          { "type": "string", "description": "Full ARN of usage principal (encrypt/decrypt)" },
+    "KeyAliasName":         { "type": "string", "description": "KMS alias name (must be unique per account, use -new suffix during migration)" },
     "CostCentre":           { "type": "string", "default": "TESCO-IMS-PLATFORM" },
     "ManagedBy":            { "type": "string", "default": "github-actions" }
   }
