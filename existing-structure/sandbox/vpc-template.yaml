@@ -1,19 +1,9 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: |
-  SANDBOX VPC — Sandbox / POC Account
-  ──────────────────────────────────────────────────────────────────────
-  THIS IS THE OLD STRUCTURE.
-  This file is one of 68 nearly-identical copies in the repository:
-    coll-dev/vpc-template.yaml    ← YOU ARE HERE
-    coll-ppe/vpc-template.yaml    ← identical structure, different defaults
-    coll-prd/vpc-template.yaml    ← identical structure, different defaults
-    coll-tst/vpc-template.yaml    ← identical structure, different defaults
-    comm-dev/vpc-template.yaml    ← identical structure, different defaults
-    ... (63 more copies)
-
-  Problem: Change a VPC tag → edit 68 files.
-           Miss one file → infrastructure inconsistency across accounts.
-  ──────────────────────────────────────────────────────────────────────
+Description: >-
+  SANDBOX VPC - Sandbox / POC Account (OLD STRUCTURE).
+  One of 68 near-identical per-account copies. Problem: changing a tag
+  requires editing 68 files; missing one causes inconsistency.
+  The new-structure master template replaces all copies.
 
 Parameters:
   AccountId:
