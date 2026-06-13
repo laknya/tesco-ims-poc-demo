@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 # cfn-lint: W2001 is suppressed for EnableKmsEncryption and EnableAccessLogging.
-# These parameters exist in the old template but are never referenced — the template
+# These parameters exist in the old template but are never referenced -- the template
 # hardcodes encryption and logging behaviour instead. This is intentional: it illustrates
 # the drift problem (parameters declared but not wired up across 68 copies).
 Metadata:
@@ -10,19 +10,19 @@ Metadata:
         - W2001   # EnableKmsEncryption / EnableAccessLogging declared but not wired (intentional legacy drift)
         - W3005   # DependsOn: S3Bucket is explicit for demo readability (redundant but self-documenting)
 Description: |
-  DEV S3 Bucket — Development Account
-  ──────────────────────────────────────────────────────────────────────
+  DEV S3 Bucket -- Development Account
+  ----------------------------------------------------------------------
   THIS IS THE OLD STRUCTURE.
   This file is one of 68 nearly-identical copies in the repository:
-    dev/s3-template.yaml           ← YOU ARE HERE
-    coll-dev/s3-template.yaml      ← identical structure, different defaults
-    coll-ppe/s3-template.yaml      ← identical structure, different defaults
+    dev/s3-template.yaml           <- YOU ARE HERE
+    coll-dev/s3-template.yaml      <- identical structure, different defaults
+    coll-ppe/s3-template.yaml      <- identical structure, different defaults
     ... (65 more copies)
 
-  Problem: Change the bucket policy principal → edit 68 files.
-           Change lifecycle retention → touch 68 templates.
-           Rotate KMS key ARN → update 68 hardcoded defaults.
-  ──────────────────────────────────────────────────────────────────────
+  Problem: Change the bucket policy principal -> edit 68 files.
+           Change lifecycle retention -> touch 68 templates.
+           Rotate KMS key ARN -> update 68 hardcoded defaults.
+  ----------------------------------------------------------------------
 
 Parameters:
   AccountId:
@@ -41,7 +41,7 @@ Parameters:
     Type: String
     Default: "arn:aws:kms:eu-west-1:641079926471:alias/tesco-ims-dev"  # hardcoded
 
-  # ── Bucket policy principals ──────────────────────────────────────────
+  # -- Bucket policy principals ------------------------------------------
   # THESE ARE HARDCODED here. In the new structure they live in JSON config.
   # Security team must raise a PR against 68 files to rotate these.
   BucketAdminArn:
@@ -52,7 +52,7 @@ Parameters:
     Type: String
     Default: "arn:aws:iam::641079926471:role/github-actions-deploy"        # hardcoded
 
-  # ── Storage settings ─────────────────────────────────────────────────
+  # -- Storage settings -------------------------------------------------
   EnableVersioning:
     Type: String
     Default: "Enabled"                              # duplicated in all 68 files
@@ -72,7 +72,7 @@ Parameters:
     Default: "false"                                # duplicated in all 68 files
     AllowedValues: ["true", "false"]
 
-  # ── Governance ───────────────────────────────────────────────────────
+  # -- Governance -------------------------------------------------------
   CostCentre:
     Type: String
     Default: "TESCO-IMS-PLATFORM"                  # duplicated in all 68 files
@@ -81,10 +81,10 @@ Parameters:
     Type: String
     Default: "github-actions"                      # duplicated in all 68 files
 
-  # ── Cross-stack reference ─────────────────────────────────────────────
+  # -- Cross-stack reference ---------------------------------------------
   # Points to the per-account VPC stack whose VpcId is imported below.
   # In the new structure this is resolved automatically by the 4-layer system;
-  # here each of 68 files hardcodes its own value — another copy-paste risk.
+  # here each of 68 files hardcodes its own value -- another copy-paste risk.
   VpcStackName:
     Type: String
     Default: "poc-EXISTING-networking-vpc-baseline-dev"  # hardcoded per file

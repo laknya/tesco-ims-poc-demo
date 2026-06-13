@@ -1,20 +1,20 @@
-name: TESCO IMS Migration — Stage 4 Cutover
+name: TESCO IMS Migration -- Stage 4 Cutover
 
-# ── Protection layers for this destructive action ─────────────────────────────
+# -- Protection layers for this destructive action -----------------------------
 #
-#   Layer 1 — Manual trigger only (workflow_dispatch, never automatic)
-#   Layer 2 — Typed confirmation input: must enter exactly "CUTOVER"
-#   Layer 3 — Environment gate: tesco-ims-cutover reviewer must click "Approve and deploy"
-#   Layer 4 — Pre-flight parity check inside stage4-cutover.sh must pass 100%
+#   Layer 1 -- Manual trigger only (workflow_dispatch, never automatic)
+#   Layer 2 -- Typed confirmation input: must enter exactly "CUTOVER"
+#   Layer 3 -- Environment gate: tesco-ims-cutover reviewer must click "Approve and deploy"
+#   Layer 4 -- Pre-flight parity check inside stage4-cutover.sh must pass 100%
 #
-# If any layer fails the job exits — existing stacks are never touched.
-# ─────────────────────────────────────────────────────────────────────────────
+# If any layer fails the job exits -- existing stacks are never touched.
+# -----------------------------------------------------------------------------
 
 on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: 'Safety check — type CUTOVER to proceed'
+        description: 'Safety check -- type CUTOVER to proceed'
         required: true
         type: string
       account:
@@ -35,7 +35,7 @@ permissions:
 jobs:
 
   cutover:
-    name: Stage 4 — Cutover (retire existing stacks, new stacks canonical)
+    name: Stage 4 -- Cutover (retire existing stacks, new stacks canonical)
     runs-on: ubuntu-latest
     environment:
       name: tesco-ims-cutover
@@ -46,11 +46,11 @@ jobs:
       - name: Validate confirmation input
         run: |
           if [ "${{ inputs.confirm }}" != "CUTOVER" ]; then
-            echo "❌  Input must be exactly 'CUTOVER' — received: '${{ inputs.confirm }}'"
+            echo "[FAIL]  Input must be exactly 'CUTOVER' -- received: '${{ inputs.confirm }}'"
             echo "    Re-run the workflow and type CUTOVER in the confirmation field."
             exit 1
           fi
-          echo "✅  Confirmation input validated"
+          echo "[OK]  Confirmation input validated"
 
       - uses: actions/checkout@v4
 
@@ -65,5 +65,5 @@ jobs:
 
       # Layer 4: pre-flight parity check is baked into stage4-cutover.sh.
       # CI=true (set automatically by GitHub) skips the interactive read -p prompt.
-      - name: Execute cutover — dev (pre-flight parity check + delete existing stacks)
+      - name: Execute cutover -- dev (pre-flight parity check + delete existing stacks)
         run: bash scripts/stage4-cutover.sh ${{ inputs.account }}

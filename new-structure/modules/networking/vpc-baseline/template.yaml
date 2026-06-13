@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: |
   TESCO IMS - VPC Baseline (MASTER TEMPLATE)
-  ──────────────────────────────────────────────────────────────────────
+  ----------------------------------------------------------------------
   ONE file. Deployed to ALL accounts via parameters.
   Replaces: existing-structure/coll-dev/vpc-template.yaml
             existing-structure/coll-ppe/vpc-template.yaml
@@ -9,7 +9,7 @@ Description: |
             ... (65 more per-account copies)
 
   No hardcoded values. All values come from the 4-layer config system.
-  ──────────────────────────────────────────────────────────────────────
+  ----------------------------------------------------------------------
 
 Parameters:
   # --- Account Identity ---

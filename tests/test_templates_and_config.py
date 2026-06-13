@@ -47,7 +47,7 @@ class TestCfnLint:
 
     @pytest.mark.parametrize("template", [
         str(p.relative_to(REPO_ROOT)) for p in ALL_TEMPLATES
-    ], ids=lambda p: p.replace("/", "·"))
+    ], ids=lambda p: p.replace("/", "."))
     def test_template_passes_cfn_lint(self, template):
         result = cfn_lint(template)
         assert result.returncode == 0, \
@@ -77,7 +77,7 @@ class TestCfnLint:
 
     @pytest.mark.parametrize("template", [
         str(p.relative_to(REPO_ROOT)) for p in ALL_TEMPLATES
-    ], ids=lambda p: p.replace("/", "·"))
+    ], ids=lambda p: p.replace("/", "."))
     def test_description_under_1024_bytes(self, template):
         """
         CloudFormation enforces a 1024-byte limit on the template Description field.
@@ -163,7 +163,7 @@ class TestJsonSyntax:
 
     @pytest.mark.parametrize("json_file", [
         str(p.relative_to(REPO_ROOT)) for p in ALL_JSON_CONFIGS
-    ], ids=lambda p: p.replace("/", "·"))
+    ], ids=lambda p: p.replace("/", "."))
     def test_json_file_parses(self, json_file):
         try:
             json.loads(Path(json_file).read_text())
@@ -318,31 +318,37 @@ class TestStackNamingConvention:
         assert "security/kms-key"           in modules
         assert "shared-services/s3-bucket"  in modules
 
-    def test_abbrev_round_trip(self):
-        """_module_for_abbrev and _abbrev_for_module must be inverse of each other."""
-        pairs = [("vpc", "networking/vpc-baseline"),
-                 ("kms", "security/kms-key"),
-                 ("s3",  "shared-services/s3-bucket")]
-        for abbrev, domain_module in pairs:
-            result = run([
-                "bash", "-c",
-                f'source scripts/lib/stack-names.sh && _module_for_abbrev "{abbrev}"'
-            ])
-            assert result.stdout.strip() == domain_module, \
-                f"_module_for_abbrev({abbrev}) expected '{domain_module}'"
-
-            result2 = run([
-                "bash", "-c",
-                f'source scripts/lib/stack-names.sh && _abbrev_for_module "{domain_module}"'
-            ])
-            assert result2.stdout.strip() == abbrev, \
-                f"_abbrev_for_module({domain_module}) expected '{abbrev}'"
-
-    def test_unknown_abbrev_returns_error(self):
+    def test_discover_existing_modules_uses_filename_convention(self):
+        """
+        discover_existing_modules() must derive domain/module from the filename
+        convention {domain}__{module}-template.yaml with no hardcoded lookup table.
+        Adding a new module requires only adding a file -- no script change.
+        """
         result = run([
             "bash", "-c",
-            'source scripts/lib/stack-names.sh && _module_for_abbrev "unknown" 2>&1; echo "exit:$?"'
+            "source scripts/lib/stack-names.sh && discover_existing_modules dev"
         ])
-        output = result.stdout + result.stderr
-        assert "ERROR" in output or "exit:1" in output, \
-            "Unknown abbreviation should produce an error"
+        assert result.returncode == 0, f"discover_existing_modules failed: {result.stderr}"
+        modules = result.stdout.strip().splitlines()
+        assert "networking/vpc-baseline"    in modules
+        assert "security/kms-key"           in modules
+        assert "shared-services/s3-bucket"  in modules
+
+    def test_existing_templates_follow_naming_convention(self):
+        """
+        All existing-structure template files must follow {domain}__{module}-template.yaml.
+        The double-underscore separates domain from module (both may contain hyphens).
+        This naming convention is what makes discover_existing_modules() generic.
+        """
+        for account_dir in sorted(EXISTING_DIR.iterdir()):
+            if not account_dir.is_dir():
+                continue
+            for template in sorted(account_dir.glob("*-template.yaml")):
+                name = template.stem  # e.g. networking__vpc-baseline-template -> networking__vpc-baseline
+                # After stripping -template suffix:
+                stem = template.name.replace("-template.yaml", "")
+                assert "__" in stem, (
+                    f"{template.relative_to(REPO_ROOT)}: template file does not follow "
+                    f"the {{domain}}__{{module}}-template.yaml naming convention. "
+                    f"Rename it so discover_existing_modules() can derive domain/module from the filename."
+                )

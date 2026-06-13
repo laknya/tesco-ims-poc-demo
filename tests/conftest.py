@@ -1,6 +1,6 @@
 """
 Shared pytest fixtures and helpers for the TESCO IMS POC test suite.
-All tests run from the repository root — conftest.py sets the working directory.
+All tests run from the repository root -- conftest.py sets the working directory.
 """
 import json
 import os

@@ -1,6 +1,6 @@
-name: TESCO IMS Migration — Stage 5 Rollback
+name: TESCO IMS Migration -- Stage 5 Rollback
 
-# ── Emergency recovery workflow ────────────────────────────────────────────────
+# -- Emergency recovery workflow ------------------------------------------------
 #
 #   Use this to undo a cutover or recover from a failed deployment.
 #   What it does:
@@ -8,19 +8,19 @@ name: TESCO IMS Migration — Stage 5 Rollback
 #     2. Deletes poc-NEW-vpc-dev and poc-NEW-kms-dev
 #
 #   Protection layers:
-#     Layer 1 — Manual trigger only (workflow_dispatch)
-#     Layer 2 — Typed confirmation: must enter exactly "ROLLBACK"
-#     Layer 3 — Environment gate: tesco-ims-rollback reviewer must approve
+#     Layer 1 -- Manual trigger only (workflow_dispatch)
+#     Layer 2 -- Typed confirmation: must enter exactly "ROLLBACK"
+#     Layer 3 -- Environment gate: tesco-ims-rollback reviewer must approve
 #
 #   --no-fail-on-empty-changeset on both restores:
 #   Safe to run whether or not existing stacks still exist.
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: 'Safety check — type ROLLBACK to proceed'
+        description: 'Safety check -- type ROLLBACK to proceed'
         required: true
         type: string
       account:
@@ -41,7 +41,7 @@ permissions:
 jobs:
 
   rollback:
-    name: Stage 5 — Rollback (restore existing stacks, remove new stacks)
+    name: Stage 5 -- Rollback (restore existing stacks, remove new stacks)
     runs-on: ubuntu-latest
     environment:
       name: tesco-ims-rollback
@@ -52,11 +52,11 @@ jobs:
       - name: Validate confirmation input
         run: |
           if [ "${{ inputs.confirm }}" != "ROLLBACK" ]; then
-            echo "❌  Input must be exactly 'ROLLBACK' — received: '${{ inputs.confirm }}'"
+            echo "[FAIL]  Input must be exactly 'ROLLBACK' -- received: '${{ inputs.confirm }}'"
             echo "    Re-run the workflow and type ROLLBACK in the confirmation field."
             exit 1
           fi
-          echo "✅  Confirmation input validated"
+          echo "[OK]  Confirmation input validated"
 
       - uses: actions/checkout@v4
 
@@ -67,5 +67,5 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       # CI=true (set automatically by GitHub) skips the interactive read -p prompt.
-      - name: Execute rollback — dev (restore existing stacks, delete new stacks)
+      - name: Execute rollback -- dev (restore existing stacks, delete new stacks)
         run: bash scripts/stage5-rollback.sh ${{ inputs.account }}

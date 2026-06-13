@@ -173,8 +173,8 @@ class TestUnrelatedChanges:
         "scripts/demo-one-change.sh",
         "CLAUDE.md",
         ".github/workflows/migration-pipeline.yml",
-        "existing-structure/dev/vpc-template.yaml",
-        "existing-structure/dev/vpc-params.json",
+        "existing-structure/dev/networking__vpc-baseline-template.yaml",
+        "existing-structure/dev/networking__vpc-baseline-params.json",
     ])
     def test_unrelated_file_produces_empty_matrix(self, filepath):
         out = detect(filepath)

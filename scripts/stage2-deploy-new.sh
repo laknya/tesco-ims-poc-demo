@@ -249,8 +249,12 @@ for p in params:
   # Step C: Deploy from the ONE master template
   echo "  +- Step C: Deploying from master template [ModuleVersion=${VERSION}]..."
 
+  # Detect whether this template creates IAM resources (requires capabilities).
+  # Generic check: any AWS::IAM:: resource type triggers CAPABILITY_NAMED_IAM.
   EXTRA_CAPS=""
-  [[ "${MODULE}" == "kms-key" ]] && EXTRA_CAPS="--capabilities CAPABILITY_NAMED_IAM"
+  if grep -q "Type: AWS::IAM::" "${TEMPLATE}" 2>/dev/null; then
+    EXTRA_CAPS="--capabilities CAPABILITY_NAMED_IAM"
+  fi
 
   # shellcheck disable=SC2086
   aws cloudformation deploy \

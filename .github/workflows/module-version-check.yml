@@ -4,7 +4,7 @@ name: Module Version Check
 # Blocks merge if a template.yaml was changed without bumping version.json.
 #
 # This mirrors the AWS CloudFormation Registry constraint:
-#   "You cannot overwrite an existing version — you must register a new version."
+#   "You cannot overwrite an existing version -- you must register a new version."
 #   Each template change = a new module version (major.minor.patch).
 #
 # See: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/module-versioning.html
@@ -37,7 +37,7 @@ jobs:
         run: |
           BASE="${{ github.event.pull_request.base.sha }}"
           HEAD="${{ github.event.pull_request.head.sha }}"
-          echo "Comparing $BASE → $HEAD"
+          echo "Comparing $BASE -> $HEAD"
 
           # List every module template that changed
           CHANGED_TEMPLATES=$(git diff --name-only "$BASE" "$HEAD" \
@@ -53,9 +53,9 @@ jobs:
             vf="${dir}/version.json"
             if ! git diff --name-only "$BASE" "$HEAD" | grep -Fq "${vf}"; then
               MISSING_BUMPS="${MISSING_BUMPS}${tmpl}\n"
-              echo "  ❌ $tmpl changed — ${vf} NOT bumped"
+              echo "  [FAIL] $tmpl changed -- ${vf} NOT bumped"
             else
-              echo "  ✅ $tmpl changed — ${vf} bumped ✓"
+              echo "  [OK] $tmpl changed -- ${vf} bumped [OK]"
             fi
           done <<< "$CHANGED_TEMPLATES"
 
@@ -98,7 +98,7 @@ jobs:
           echo "$TABLE" >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
 
-      - name: Post PR comment — version check result
+      - name: Post PR comment -- version check result
         if: always()
         uses: actions/github-script@v7
         with:
@@ -108,12 +108,12 @@ jobs:
             const missingListRaw = ${{ toJSON(steps.changed.outputs.missing_bumps_list) }};
             const manifestTable  = ${{ toJSON(steps.manifest.outputs.table) }};
             const jobStatus      = '${{ job.status }}';
-            const icon           = (jobStatus === 'success' && !missingBumps) ? '✅' : '❌';
+            const icon           = (jobStatus === 'success' && !missingBumps) ? '[OK]' : '[FAIL]';
 
             let body = `## Module Version Check ${icon}\n\n`;
 
             if (missingBumps) {
-              body += `### ❌ Version bump required\n\n`;
+              body += `### [FAIL] Version bump required\n\n`;
               body += `The following modules had \`template.yaml\` changes without a matching \`version.json\` bump:\n\n`;
               (missingListRaw || '').trim().split('\n').filter(Boolean).forEach(t => {
                 body += `- \`${t}\`\n`;
@@ -130,7 +130,7 @@ jobs:
               body += `  --schema-handler-package s3://tesco-ims-cfn-modules/vpc-baseline-v<NEW>.zip\n`;
               body += `\`\`\`\n`;
             } else {
-              body += `### ✅ All module versions in sync\n\n`;
+              body += `### [OK] All module versions in sync\n\n`;
               body += `Every changed \`template.yaml\` has a matching \`version.json\` bump.\n\n`;
             }
 
@@ -153,6 +153,6 @@ jobs:
       - name: Fail if version bumps missing
         if: steps.changed.outputs.missing_bumps == 'true'
         run: |
-          echo "❌ PR blocked: template changes found without version.json bumps."
+          echo "[FAIL] PR blocked: template changes found without version.json bumps."
           echo "   See the PR comment for remediation steps."
           exit 1

@@ -2,7 +2,7 @@
   "version": "1.0.0",
   "type_name": "TescoIMS::Networking::VpcBaseline",
   "released": "2026-06-12",
-  "template_hash": "sha256:8dbd58116921518f0147d6797e22a42c2d5e1c5c65c37606ad7874b39c4373fa",
+  "template_hash": "sha256:489ff4e6d114866ca1aab6060a5b6629425a88f1edeadf9b394d1fcd24c2d918",
   "status": "default",
   "breaking_changes": [],
   "changelog": "Initial release. Replaces 68 per-account vpc-template.yaml copies. Subnets, DNS, and governance via 4-layer parameter system.",

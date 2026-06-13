@@ -5,7 +5,7 @@
     "AccountId",
     "Environment",
     "BucketName",
-    "KmsKeyArn",
+    "KmsStackName",
     "BucketAdminArn",
     "BucketWriterArn",
     "EnableVersioning",
@@ -18,7 +18,6 @@
     "AccountId":              { "type": "string" },
     "Environment":            { "type": "string", "enum": ["dev", "ppe", "prod"] },
     "BucketName":             { "type": "string" },
-    "KmsKeyArn":              { "type": "string" },
     "BucketAdminArn":         { "type": "string" },
     "BucketWriterArn":        { "type": "string" },
     "EnableVersioning":       { "type": "string", "enum": ["Enabled", "Suspended"] },
@@ -27,6 +26,7 @@
     "EnableAccessLogging":    { "type": "string", "enum": ["true", "false"] },
     "CostCentre":             { "type": "string" },
     "ManagedBy":              { "type": "string" },
-    "VpcStackName":           { "type": "string" }
+    "VpcStackName":           { "type": "string" },
+    "KmsStackName":           { "type": "string", "description": "KMS stack name -- CI script waits for this stack before deploying S3" }
   }
 }

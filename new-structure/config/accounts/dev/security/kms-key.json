@@ -1,7 +1,8 @@
 {
-  "AccountId":       "641079926471",
-  "Environment":     "dev",
-  "KeyDescription":  "TESCO IMS Platform Key - DEV",
-  "KeyAdminArn":     "arn:aws:iam::641079926471:root",
-  "KeyUsageArn":     "arn:aws:iam::641079926471:role/tesco-ims-migration-deploy-role"
+  "AccountId":      "641079926471",
+  "Environment":    "dev",
+  "KeyDescription": "TESCO IMS Platform Key - DEV",
+  "KeyAdminArn":    "arn:aws:iam::641079926471:root",
+  "KeyUsageArn":    "arn:aws:iam::641079926471:role/tesco-ims-migration-deploy-role",
+  "KeyAliasName":   "alias/tesco-ims-dev-platform-new"
 }

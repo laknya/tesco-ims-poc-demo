@@ -1,5 +1,5 @@
 """
-AWS-dependent tests — skipped unless AWS credentials are available.
+AWS-dependent tests -- skipped unless AWS credentials are available.
 
 These test the live CloudFormation pipeline (stages 1-5) and parity validator.
 Mark: @pytest.mark.aws
@@ -32,7 +32,7 @@ def has_aws_credentials() -> bool:
 
 skip_no_aws = pytest.mark.skipif(
     not has_aws_credentials(),
-    reason="AWS credentials not available — set up OIDC or env vars to run these tests"
+    reason="AWS credentials not available -- set up OIDC or env vars to run these tests"
 )
 
 

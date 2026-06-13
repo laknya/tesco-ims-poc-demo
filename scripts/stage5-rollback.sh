@@ -32,14 +32,14 @@ echo "Restoring EXISTING stacks from per-account templates..."
 while IFS= read -r domain_module; do
   DOMAIN="${domain_module%/*}"; MODULE="${domain_module#*/}"
 
-  ABBREV=$(_abbrev_for_module "${domain_module}")
-
-  TEMPLATE="existing-structure/${ACCOUNT}/${ABBREV}-template.yaml"
-  PARAMS="existing-structure/${ACCOUNT}/${ABBREV}-params.json"
+  TEMPLATE="existing-structure/${ACCOUNT}/${DOMAIN}__${MODULE}-template.yaml"
+  PARAMS="existing-structure/${ACCOUNT}/${DOMAIN}__${MODULE}-params.json"
   STACK=$(cfn_stack_name "EXISTING" "${DOMAIN}" "${MODULE}" "${ACCOUNT}")
 
   EXTRA_CAPS=""
-  [[ "${ABBREV}" == "kms" ]] && EXTRA_CAPS="--capabilities CAPABILITY_NAMED_IAM"
+  if grep -q "Type: AWS::IAM::" "${TEMPLATE}" 2>/dev/null; then
+    EXTRA_CAPS="--capabilities CAPABILITY_NAMED_IAM"
+  fi
 
   echo ">> Restoring ${STACK}..."
   # shellcheck disable=SC2086

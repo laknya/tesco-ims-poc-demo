@@ -281,19 +281,23 @@ class TestCrossStackDependencyDetection:
         assert result.returncode == 0, f"Snippet failed: {result.stderr}"
         return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
-    def test_s3_module_has_vpc_stack_dependency(self, tmp_path):
+    def test_s3_module_has_vpc_and_kms_stack_dependencies(self, tmp_path):
         """
-        Resolved S3 params for dev must produce exactly one dependency:
-        VpcStackName pointing at the VPC stack.
-        The stage2 wait loop will pause until that stack is CREATE_COMPLETE.
+        Resolved S3 params for dev must produce two dependencies:
+        VpcStackName (VPC must be ready for Fn::ImportValue) and
+        KmsStackName (KMS alias must exist before S3 early validation runs).
+        stage2 wait loop pauses for BOTH before deploying S3.
         """
         out = str(tmp_path / "s3-resolved.json")
         resolve("dev", "shared-services", "s3-bucket", out)
         deps = self._extract_deps(out, tmp_path)
-        assert len(deps) == 1, \
-            f"Expected exactly 1 cross-stack dep for S3, got: {deps}"
-        assert deps[0] == "VpcStackName=poc-NEW-networking-vpc-baseline-dev", \
-            f"S3 dependency key=value wrong: {deps[0]}"
+        dep_keys = {d.split("=")[0] for d in deps}
+        assert "VpcStackName" in dep_keys, \
+            f"S3 must depend on VpcStackName for Fn::ImportValue. Got deps: {deps}"
+        assert "KmsStackName" in dep_keys, \
+            f"S3 must depend on KmsStackName so KMS alias exists at deploy time. Got deps: {deps}"
+        assert len(deps) == 2, \
+            f"Expected exactly 2 cross-stack deps for S3, got: {deps}"
 
     def test_vpc_module_has_no_stack_dependencies(self, tmp_path):
         """
