@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-TESCO IMS Landing Zone — Parameter Resolver
+TESCO IMS Landing Zone -- Parameter Resolver
 Repo: git@github.com:laknya/tesco-ims-poc-demo.git
 
 Merges 4 layers for a given account/domain/module:
   Layer 1: config/_defaults/{domain}/{module}.json          (org-wide shared values)
   Layer 2: config/environments/{env}/{domain}/{module}.json (env-specific overrides)
   Layer 3: config/ous/{ou}/{domain}/{module}.json           (OU-specific overrides)
-  Layer 4: config/accounts/{account}/{domain}/{module}.json (account delta — highest precedence)
+  Layer 4: config/accounts/{account}/{domain}/{module}.json (account delta -- highest precedence)
 
 Account environment and OU are looked up from config/_accounts-registry.yaml.
 """
@@ -31,9 +31,9 @@ def load_json(path: str) -> dict:
     p = Path(path)
     if p.exists():
         data = json.loads(p.read_text())
-        print(f"  ✅ Layer loaded : {path}  ({len(data)} params)")
+        print(f"  [OK] Layer loaded : {path}  ({len(data)} params)")
         return data
-    print(f"  ⬜ Not found    : {path}")
+    print(f"        Not found    : {path}")
     return {}
 
 
@@ -45,27 +45,27 @@ def resolve(account: str, domain: str, module: str) -> dict:
     env = account_info.get("environment", "")
     ou  = account_info.get("ou", "")
 
-    print(f"\n{'─'*56}")
+    print(f"\n{'-'*56}")
     print(f"Resolving: account={account}  domain={domain}  module={module}")
-    print(f"  Registry lookup → env={env}  ou={ou}")
-    print(f"{'─'*56}")
+    print(f"  Registry lookup -> env={env}  ou={ou}")
+    print(f"{'-'*56}")
 
     params = {}
 
-    # Layer 1 — org-wide defaults
+    # Layer 1 -- org-wide defaults
     params.update(load_json(f"{base}/_defaults/{domain}/{module}.json"))
 
-    # Layer 2 — environment overrides (optional)
+    # Layer 2 -- environment overrides (optional)
     params.update(load_json(f"{base}/environments/{env}/{domain}/{module}.json"))
 
-    # Layer 3 — OU overrides (optional)
+    # Layer 3 -- OU overrides (optional)
     ou_key = ou.replace("/", "-").strip("-")
     params.update(load_json(f"{base}/ous/{ou_key}/{domain}/{module}.json"))
 
-    # Layer 4 — account delta (highest precedence)
+    # Layer 4 -- account delta (highest precedence)
     params.update(load_json(f"{base}/accounts/{account}/{domain}/{module}.json"))
 
-    print(f"\n  → Final : {len(params)} merged parameters")
+    print(f"\n  -> Final : {len(params)} merged parameters")
     return params
 
 
@@ -91,8 +91,8 @@ if __name__ == "__main__":
 
     Path(args.output).write_text(json.dumps(cfn_ready, indent=2))
 
-    print(f"\nResolved parameter file → {args.output}")
-    print(f"{'─'*56}")
+    print(f"\nResolved parameter file -> {args.output}")
+    print(f"{'-'*56}")
     for p in cfn_ready:
         print(f"  {p['ParameterKey']:<26} = {p['ParameterValue']}")
-    print(f"{'─'*56}\n")
+    print(f"{'-'*56}\n")

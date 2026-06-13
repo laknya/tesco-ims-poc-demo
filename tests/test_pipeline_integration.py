@@ -1,7 +1,7 @@
 """
-End-to-end pipeline integration tests — no AWS required.
+End-to-end pipeline integration tests -- no AWS required.
 
-Tests the full local pipeline flow: resolve → detect → stage2 filter → manifest.
+Tests the full local pipeline flow: resolve -> detect -> stage2 filter -> manifest.
 These simulate what GitHub Actions does on every push, without touching AWS.
 """
 import json
@@ -15,7 +15,7 @@ import yaml
 from conftest import REPO_ROOT, CONFIG_DIR, MODULES_DIR, python, run, resolve
 
 
-# ── Full resolver pipeline ────────────────────────────────────────────────────
+# -- Full resolver pipeline ----------------------------------------------------
 
 class TestResolverPipeline:
 
@@ -65,7 +65,7 @@ class TestResolverPipeline:
             "CostCentre (from _defaults) should be identical across accounts"
 
 
-# ── Stage 2 module filter ──────────────────────────────────────────────────────
+# -- Stage 2 module filter ------------------------------------------------------
 
 class TestStage2ModuleFilter:
 
@@ -106,7 +106,7 @@ class TestStage2ModuleFilter:
         assert count >= 3, f"Expected at least 3 modules for dev, got {count}"
 
 
-# ── Version manifest ──────────────────────────────────────────────────────────
+# -- Version manifest ----------------------------------------------------------
 
 class TestVersionManifest:
 
@@ -150,7 +150,7 @@ class TestVersionManifest:
                 f"Manifest version mismatch for {dm}: {meta['version']} vs {stored['version']}"
 
 
-# ── Account params generator ──────────────────────────────────────────────────
+# -- Account params generator --------------------------------------------------
 
 class TestAccountParamsGenerator:
 
@@ -179,12 +179,12 @@ class TestAccountParamsGenerator:
             assert isinstance(data, list), f"{f.name}: expected CFN param list"
 
 
-# ── Full no-AWS pipeline simulation ───────────────────────────────────────────
+# -- Full no-AWS pipeline simulation -------------------------------------------
 
 class TestFullLocalPipeline:
 
     def test_full_validate_pipeline_passes(self):
-        """Run every local validation step in sequence — mirrors the CI validate job."""
+        """Run every local validation step in sequence -- mirrors the CI validate job."""
         steps = [
             # 1. version integrity
             [sys.executable, "new-structure/pipeline/check_module_versions.py"],
@@ -223,7 +223,7 @@ class TestFullLocalPipeline:
 
     def test_detect_changes_then_stage2_filter_consistency(self):
         """
-        Simulate: PR changes s3-bucket config → detect_changes → stage2 module list.
+        Simulate: PR changes s3-bucket config -> detect_changes -> stage2 module list.
         The module in the detect_changes output must be in discover_new_modules(dev).
         """
         detect_result = subprocess.run(
@@ -251,7 +251,7 @@ class TestFullLocalPipeline:
                 f"Detected module '{module}' not in discover_new_modules(dev)"
 
 
-# ── Cross-stack dependency detection ─────────────────────────────────────────
+# -- Cross-stack dependency detection -----------------------------------------
 
 # The Python snippet embedded in stage2-deploy-new.sh extracts every resolved
 # parameter whose key ends in "StackName" and prints "KEY=VALUE" lines.
@@ -297,7 +297,7 @@ class TestCrossStackDependencyDetection:
 
     def test_vpc_module_has_no_stack_dependencies(self, tmp_path):
         """
-        VPC is the root module — it must have zero *StackName dependencies.
+        VPC is the root module -- it must have zero *StackName dependencies.
         If it did, it would wait for itself and hang the pipeline forever.
         """
         out = str(tmp_path / "vpc-resolved.json")
@@ -307,7 +307,7 @@ class TestCrossStackDependencyDetection:
             f"VPC module must have no cross-stack deps (it is the root), got: {deps}"
 
     def test_kms_module_has_no_stack_dependencies(self, tmp_path):
-        """KMS module is also a root — it does not depend on any other stack."""
+        """KMS module is also a root -- it does not depend on any other stack."""
         out = str(tmp_path / "kms-resolved.json")
         resolve("dev", "security", "kms-key", out)
         deps = self._extract_deps(out, tmp_path)

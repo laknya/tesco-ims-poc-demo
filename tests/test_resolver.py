@@ -1,5 +1,5 @@
 """
-Tests for resolve_parameters.py — the 4-layer parameter merger.
+Tests for resolve_parameters.py -- the 4-layer parameter merger.
 
 Verifies:
   - All known account/module combinations resolve without error
@@ -18,7 +18,7 @@ import yaml
 from conftest import REPO_ROOT, CONFIG_DIR, resolve, python
 
 
-# ── Fixtures ──────────────────────────────────────────────────────────────────
+# -- Fixtures ------------------------------------------------------------------
 
 @pytest.fixture(scope="module")
 def defaults_vpc():
@@ -36,14 +36,14 @@ def defaults_s3():
         return json.load(f)
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# -- Helpers -------------------------------------------------------------------
 
 def params_as_dict(cfn_list: list) -> dict:
     """Convert CFN param list to {key: value} for easy assertion."""
     return {p["ParameterKey"]: p["ParameterValue"] for p in cfn_list}
 
 
-# ── Output format ─────────────────────────────────────────────────────────────
+# -- Output format -------------------------------------------------------------
 
 class TestOutputFormat:
 
@@ -71,17 +71,17 @@ class TestOutputFormat:
         assert len(keys) == len(set(keys)), f"Duplicate parameter keys: {keys}"
 
 
-# ── Layer precedence ──────────────────────────────────────────────────────────
+# -- Layer precedence ----------------------------------------------------------
 
 class TestLayerPrecedence:
 
     def test_account_overrides_default_vpc_cidr(self):
-        """dev account specifies its own VpcCidr — should win over defaults."""
+        """dev account specifies its own VpcCidr -- should win over defaults."""
         with open(CONFIG_DIR / "accounts/dev/networking/vpc-baseline.json") as f:
             account_delta = json.load(f)
 
         if "VpcCidr" not in account_delta:
-            pytest.skip("dev account doesn't override VpcCidr — test not applicable")
+            pytest.skip("dev account doesn't override VpcCidr -- test not applicable")
 
         params = params_as_dict(resolve("dev", "networking", "vpc-baseline"))
         assert params["VpcCidr"] == account_delta["VpcCidr"], \
@@ -123,7 +123,7 @@ class TestLayerPrecedence:
                 assert params[key] == account_s3[key]
 
 
-# ── All account × module combinations ────────────────────────────────────────
+# -- All account × module combinations ----------------------------------------
 
 class TestAllAccountModuleCombinations:
 
@@ -151,7 +151,7 @@ class TestAllAccountModuleCombinations:
             f"Expected ≥{min_params} params, got {len(params)} for {account}/{domain}/{module}"
 
 
-# ── Required parameters per module ───────────────────────────────────────────
+# -- Required parameters per module -------------------------------------------
 
 class TestRequiredParameters:
 
@@ -180,12 +180,12 @@ class TestRequiredParameters:
             assert key in params, f"Required S3 param '{key}' missing from resolved output"
 
 
-# ── Cross-stack reference ─────────────────────────────────────────────────────
+# -- Cross-stack reference -----------------------------------------------------
 
 class TestCrossStackReference:
 
     def test_s3_kms_key_arn_present(self):
-        """KmsKeyArn must be set — S3 bucket encryption depends on it."""
+        """KmsKeyArn must be set -- S3 bucket encryption depends on it."""
         params = params_as_dict(resolve("dev", "shared-services", "s3-bucket"))
         kms_arn = params.get("KmsKeyArn", "")
         assert kms_arn.startswith("arn:aws:kms:"), \
@@ -211,7 +211,7 @@ class TestCrossStackReference:
              "S3 Fn::ImportValue will fail at deploy time if this is wrong.")
 
 
-# ── Error handling ────────────────────────────────────────────────────────────
+# -- Error handling ------------------------------------------------------------
 
 class TestErrorHandling:
 
@@ -228,7 +228,7 @@ class TestErrorHandling:
         # but the resulting params should be fewer than a valid account
         if result.returncode == 0:
             params = json.loads(Path("/tmp/test-unknown.json").read_text())
-            # Should only have defaults — no account-layer params
+            # Should only have defaults -- no account-layer params
             assert len(params) <= 10, \
                 "Unknown account should yield only default params (no account delta)"
 

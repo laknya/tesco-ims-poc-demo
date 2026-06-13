@@ -1,7 +1,7 @@
 #!/bin/bash
-# Stage 4 — Cutover: retire ALL existing stacks for the account.
+# Stage 4 -- Cutover: retire ALL existing stacks for the account.
 # Pre-flight: re-runs parity for every module. Any failure aborts cutover.
-# Auto-discovers modules — no module names hardcoded.
+# Auto-discovers modules -- no module names hardcoded.
 set -e
 
 ACCOUNT=${1:-dev}
@@ -11,14 +11,14 @@ REGION="eu-west-1"
 source "$(dirname "$0")/lib/stack-names.sh"
 
 echo ""
-echo "╔══════════════════════════════════════════════════════╗"
-echo "║  STAGE 4 — Cutover (${ACCOUNT})                      "
-echo "╚══════════════════════════════════════════════════════╝"
+echo "+======================================================+"
+echo "|  STAGE 4 -- Cutover (${ACCOUNT})                      "
+echo "+======================================================+"
 echo ""
 
 pip install boto3 pyyaml -q 2>/dev/null || true
 
-# ── Pre-flight: parity check for every module ─────────────────────────
+# -- Pre-flight: parity check for every module -------------------------
 echo "Pre-flight: final parity check before we delete anything..."
 echo ""
 
@@ -33,8 +33,8 @@ while IFS= read -r domain_module; do
     --old-stack "${OLD_STACK}" \
     --new-stack "${NEW_STACK}" \
     --region    "${REGION}" \
-    || { echo "❌ Parity failed for ${domain_module} — cutover aborted."; exit 1; }
-  echo "  ✅ ${domain_module}"
+    || { echo "[FAIL] Parity failed for ${domain_module} -- cutover aborted."; exit 1; }
+  echo "  [OK] ${domain_module}"
 
 done < <(discover_new_modules "${ACCOUNT}")
 
@@ -56,23 +56,23 @@ while IFS= read -r domain_module; do
 done < <(discover_new_modules "${ACCOUNT}")
 echo ""
 
-# ── Confirmation ──────────────────────────────────────────────────────
+# -- Confirmation ------------------------------------------------------
 # In CI the environment gate approval + typed workflow_dispatch input
 # substitutes for the interactive prompt.
 if [ "${CI}" = "true" ]; then
-  echo "  Running in CI — environment gate approval + workflow_dispatch input"
+  echo "  Running in CI -- environment gate approval + workflow_dispatch input"
   echo "  'CUTOVER' substitutes for interactive confirmation."
 else
   read -r -p "Type YES to confirm cutover: " CONFIRM
   [ "${CONFIRM}" = "YES" ] || { echo "Cutover cancelled."; exit 0; }
 fi
 
-# ── Delete EXISTING stacks (in reverse discovery order for safe dependency) ──
+# -- Delete EXISTING stacks (in reverse discovery order for safe dependency) --
 echo ""
 while IFS= read -r domain_module; do
   DOMAIN="${domain_module%/*}"; MODULE="${domain_module#*/}"
   STACK=$(cfn_stack_name "EXISTING" "${DOMAIN}" "${MODULE}" "${ACCOUNT}")
-  echo "► Deleting ${STACK}..."
+  echo ">> Deleting ${STACK}..."
   aws cloudformation delete-stack \
     --stack-name "${STACK}" --region "${REGION}"
   aws cloudformation wait stack-delete-complete \
@@ -81,9 +81,9 @@ while IFS= read -r domain_module; do
 done < <(discover_new_modules "${ACCOUNT}" | tac)
 
 echo ""
-echo "╔══════════════════════════════════════════════════════╗"
-echo "║  ✅  CUTOVER COMPLETE (${ACCOUNT})                    "
-echo "║                                                      "
-echo "║  Retired: existing-structure/${ACCOUNT}/             "
-echo "║  Active : new-structure/modules/ + config/accounts/  "
-echo "╚══════════════════════════════════════════════════════╝"
+echo "+======================================================+"
+echo "|  [OK]  CUTOVER COMPLETE (${ACCOUNT})                    "
+echo "|                                                      "
+echo "|  Retired: existing-structure/${ACCOUNT}/             "
+echo "|  Active : new-structure/modules/ + config/accounts/  "
+echo "+======================================================+"

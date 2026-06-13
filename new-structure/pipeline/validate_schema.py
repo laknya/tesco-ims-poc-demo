@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-TESCO IMS — Account Config Schema Validator
+TESCO IMS -- Account Config Schema Validator
 
 Validates each account's config JSON against the module's parameters.schema.json.
-Catches missing required parameters BEFORE deployment — not at 2am during a failed stack update.
+Catches missing required parameters BEFORE deployment -- not at 2am during a failed stack update.
 
 Usage:
   python3 validate_schema.py                          # validate all accounts, all modules
@@ -108,24 +108,24 @@ def run(account_filter=None, domain_filter=None, module_filter=None) -> bool:
                 if errors:
                     all_ok = False
 
-    print(f"\n{'─'*60}")
+    print(f"\n{'-'*60}")
     print(f"  Account Config Schema Validation")
     print(f"  {'Account':<15} {'Module':<35} {'Result'}")
-    print(f"{'─'*60}")
+    print(f"{'-'*60}")
 
     for account, domain, module, errors in results:
         label = f"{domain}/{module}"
         if errors:
-            print(f"  ❌  {account:<15} {label:<35} FAIL")
+            print(f"  [FAIL]  {account:<15} {label:<35} FAIL")
             for e in errors:
-                print(f"       → {e}")
+                print(f"       -> {e}")
         else:
-            print(f"  ✅  {account:<15} {label:<35} OK")
+            print(f"  [OK]  {account:<15} {label:<35} OK")
 
-    print(f"{'─'*60}")
+    print(f"{'-'*60}")
 
     if all_ok:
-        print(f"\n  All account configs valid against module schemas. ✅\n")
+        print(f"\n  All account configs valid against module schemas. [OK]\n")
     else:
         print(f"\n  Schema validation FAILED. Fix config errors before deploying.\n")
 
