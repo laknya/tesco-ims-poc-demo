@@ -125,14 +125,29 @@ class TestCfnLint:
         assert "DependsOn: S3Bucket" in content, \
             "S3BucketPolicy must have explicit DependsOn: S3Bucket"
 
+    def test_s3_template_has_admin_and_writer_statements(self):
+        """S3 bucket policy must include AdminAccess and WriterAccess statements."""
+        s3_template = MODULES_DIR / "shared-services" / "s3-bucket" / "template.yaml"
+        content = s3_template.read_text()
+        assert "AdminAccess" in content, \
+            "S3 template missing AdminAccess bucket policy statement"
+        assert "WriterAccess" in content, \
+            "S3 template missing WriterAccess bucket policy statement"
+
     def test_s3_template_has_deny_non_vpc_statement(self):
-        """S3 bucket policy must include DenyNonVpcAccess (cross-stack VPC reference)."""
+        """
+        S3 bucket policy must include DenyNonVpcAccess using Fn::ImportValue of the VPC stack.
+        This is a key demo feature: shows cross-stack Fn::ImportValue in action so
+        developers see how to use CloudFormation exports to enforce network-level access control.
+        """
         s3_template = MODULES_DIR / "shared-services" / "s3-bucket" / "template.yaml"
         content = s3_template.read_text()
         assert "DenyNonVpcAccess" in content, \
-            "S3 template missing DenyNonVpcAccess bucket policy statement"
+            "S3 template missing DenyNonVpcAccess statement (cross-stack VPC reference demo)"
         assert "Fn::ImportValue" in content, \
-            "S3 template must use Fn::ImportValue for VpcStackName cross-stack reference"
+            "S3 template missing Fn::ImportValue (needed to import VpcId from VPC stack)"
+        assert "VpcStackName" in content, \
+            "S3 template missing VpcStackName parameter (supplies the stack name for the import)"
 
     def test_vpc_template_exports_vpc_id(self):
         """VPC template must export VpcId for cross-stack consumers."""

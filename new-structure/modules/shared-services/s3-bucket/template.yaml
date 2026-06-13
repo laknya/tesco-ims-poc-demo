@@ -4,21 +4,11 @@ Metadata:
     config:
       ignore_checks:
         - W3005   # DependsOn: S3Bucket on S3BucketPolicy is explicit for demo readability (redundant but self-documenting)
-Description: |
-  TESCO IMS — S3 Bucket (centralized module)
-  Replaces: existing-structure/dev/s3-template.yaml
-            existing-structure/coll-dev/s3-template.yaml
-            ... (one file replaces all per-account copies)
-
+Description: >-
+  TESCO IMS - S3 Bucket (centralized module). Replaces per-account copies.
   Bucket policy principals (BucketAdminArn, BucketWriterArn) are parameters.
   Security team owns accounts/{account}/shared-services/s3-bucket.json.
   Platform team owns this template. No cross-team template edits needed.
-
-  Cross-stack dependency:
-    This stack imports VpcId from the VPC stack (VpcStackName parameter).
-    CloudFormation will refuse to deploy this stack until the VPC stack exists
-    and has exported <VpcStackName>-VpcId. The bucket policy enforces that all
-    S3 requests must originate from that VPC (DenyNonVpcAccess statement).
 
 Parameters:
   AccountId:
@@ -46,16 +36,14 @@ Parameters:
     Type: String
   ManagedBy:
     Type: String
-  # ── Cross-stack reference ──────────────────────────────────────────────────
-  # The VPC stack name whose exported VpcId this bucket policy will reference.
-  # Populated by the 4-layer resolver from accounts/{account}/shared-services/s3-bucket.json.
-  # CloudFormation will fail at deploy time if this stack does not exist or has
-  # not exported <VpcStackName>-VpcId — enforcing the correct deployment order.
   VpcStackName:
     Type: String
-    Description: >
-      Name of the VPC stack whose VpcId export this bucket policy imports.
-      Must match the VPC stack deployed to the same account/region.
+    Description: >-
+      Name of the VPC stack whose VpcId is imported via Fn::ImportValue.
+      Used in the DenyNonVpcAccess bucket policy statement so that S3 only
+      accepts requests originating from the account VPC.
+      Supplied per-account via accounts/{account}/shared-services/s3-bucket.json
+      — the 4-layer resolver provides the correct stack name automatically.
 
 Resources:
   S3Bucket:
@@ -127,21 +115,10 @@ Resources:
               - !GetAtt S3Bucket.Arn
               - !Sub '${S3Bucket.Arn}/*'
 
-          # ── Cross-stack reference in action ─────────────────────────────
-          # Fn::ImportValue reads the VpcId exported by the VPC stack.
-          # This statement denies ALL S3 access that does not originate from
-          # that VPC, enforcing network-layer isolation at the bucket policy level.
-          #
-          # Deployment order enforced by CloudFormation:
-          #   1. poc-NEW-vpc-dev   (exports poc-NEW-vpc-dev-VpcId)
-          #   2. poc-NEW-s3-dev    (imports that export — fails if VPC stack missing)
-          #
-          # Stack export name pattern: <VpcStackName>-VpcId
-          # Resolved at deploy time via Fn::ImportValue — never hardcoded.
           - Sid: DenyNonVpcAccess
             Effect: Deny
-            Principal: '*'
-            Action: 's3:*'
+            Principal: "*"
+            Action: "s3:*"
             Resource:
               - !GetAtt S3Bucket.Arn
               - !Sub '${S3Bucket.Arn}/*'
@@ -149,6 +126,7 @@ Resources:
               StringNotEquals:
                 aws:SourceVpc:
                   Fn::ImportValue: !Sub "${VpcStackName}-VpcId"
+
 
 Outputs:
   BucketName:
