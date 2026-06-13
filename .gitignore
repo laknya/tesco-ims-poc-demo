@@ -5,8 +5,6 @@ new-structure/config/generated/
 *.md
 !README.md
 
-# Test suite — local only
-tests/
 
 # macOS
 .DS_Store
