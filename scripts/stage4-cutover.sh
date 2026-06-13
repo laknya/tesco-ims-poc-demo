@@ -29,6 +29,19 @@ while IFS= read -r domain_module; do
   NEW_STACK=$(cfn_stack_name "NEW"      "${DOMAIN}" "${MODULE}" "${ACCOUNT}")
 
   echo "  Checking ${domain_module}..."
+
+  # Modules migrated via CFN Resource Import already have no EXISTING stack.
+  # Count them as passing -- they were fully migrated in stage 2.
+  IMPORT_CONFIG="new-structure/modules/${domain_module}/import-config.json"
+  OLD_STATUS=$(aws cloudformation describe-stacks \
+    --stack-name "${OLD_STACK}" --region "${REGION}" \
+    --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+
+  if [ -f "${IMPORT_CONFIG}" ] && [ "${OLD_STATUS}" = "DOES_NOT_EXIST" ]; then
+    echo "  [OK] ${domain_module} -- already migrated via CFN Import (no preflight needed)"
+    continue
+  fi
+
   python3 new-structure/pipeline/validate_parity.py \
     --old-stack "${OLD_STACK}" \
     --new-stack "${NEW_STACK}" \
@@ -68,10 +81,18 @@ else
 fi
 
 # -- Delete EXISTING stacks (in reverse discovery order for safe dependency) --
+# Modules migrated via CFN Resource Import have no EXISTING stack -- skip those.
 echo ""
 while IFS= read -r domain_module; do
   DOMAIN="${domain_module%/*}"; MODULE="${domain_module#*/}"
   STACK=$(cfn_stack_name "EXISTING" "${DOMAIN}" "${MODULE}" "${ACCOUNT}")
+  STACK_STATUS=$(aws cloudformation describe-stacks \
+    --stack-name "${STACK}" --region "${REGION}" \
+    --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+  if [ "${STACK_STATUS}" = "DOES_NOT_EXIST" ]; then
+    echo ">> ${STACK} -- already gone (CFN Import migration). Skipping."
+    continue
+  fi
   echo ">> Deleting ${STACK}..."
   aws cloudformation delete-stack \
     --stack-name "${STACK}" --region "${REGION}"

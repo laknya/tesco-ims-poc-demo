@@ -64,6 +64,8 @@ Parameters:
 Resources:
   VPC:
     Type: AWS::EC2::VPC
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       CidrBlock: !Ref VpcCidr
       EnableDnsHostnames: !Ref EnableDnsHostnames
@@ -82,6 +84,8 @@ Resources:
 
   InternetGateway:
     Type: AWS::EC2::InternetGateway
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       Tags:
         - Key: Name
@@ -97,6 +101,8 @@ Resources:
 
   PublicSubnetA:
     Type: AWS::EC2::Subnet
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       VpcId: !Ref VPC
       CidrBlock: !Ref PublicSubnetACidr
@@ -112,6 +118,8 @@ Resources:
 
   PublicSubnetB:
     Type: AWS::EC2::Subnet
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       VpcId: !Ref VPC
       CidrBlock: !Ref PublicSubnetBCidr
@@ -127,6 +135,8 @@ Resources:
 
   PrivateSubnetA:
     Type: AWS::EC2::Subnet
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       VpcId: !Ref VPC
       CidrBlock: !Ref PrivateSubnetACidr
@@ -141,6 +151,8 @@ Resources:
 
   PrivateSubnetB:
     Type: AWS::EC2::Subnet
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       VpcId: !Ref VPC
       CidrBlock: !Ref PrivateSubnetBCidr
@@ -155,6 +167,8 @@ Resources:
 
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       VpcId: !Ref VPC
       Tags:

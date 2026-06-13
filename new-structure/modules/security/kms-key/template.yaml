@@ -65,6 +65,8 @@ Parameters:
 Resources:
   KMSKey:
     Type: AWS::KMS::Key
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       Description: !Ref KeyDescription
       EnableKeyRotation: !Ref EnableKeyRotation
@@ -103,6 +105,8 @@ Resources:
 
   KMSAlias:
     Type: AWS::KMS::Alias
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       AliasName: !Ref KeyAliasName
       TargetKeyId: !Ref KMSKey
