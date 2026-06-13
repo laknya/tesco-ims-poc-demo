@@ -182,6 +182,40 @@ class TestJsonSyntax:
             assert isinstance(data, dict), f"{cfg.name}: _defaults config should be a dict"
 
 
+# ── IAM ARN hygiene ──────────────────────────────────────────────────────────
+
+class TestIamArnHygiene:
+
+    # Role names that were placeholders during development and must never reach AWS.
+    PLACEHOLDER_ROLES = [
+        "github-actions-deploy",   # replaced by tesco-ims-migration-deploy-role
+    ]
+
+    def test_no_placeholder_role_arns_in_existing_params(self):
+        """Existing-structure param files must not reference placeholder IAM roles."""
+        for params_file in sorted(EXISTING_DIR.rglob("*-params.json")):
+            data = json.loads(params_file.read_text())
+            for entry in data:
+                val = entry.get("ParameterValue", "")
+                for placeholder in self.PLACEHOLDER_ROLES:
+                    assert placeholder not in val, (
+                        f"{params_file.name}: ParameterValue '{val}' references "
+                        f"placeholder role '{placeholder}' — update to the real role ARN"
+                    )
+
+    def test_no_placeholder_role_arns_in_account_configs(self):
+        """New-structure account config JSON files must not reference placeholder IAM roles."""
+        accounts_dir = CONFIG_DIR / "accounts"
+        for cfg in sorted(accounts_dir.rglob("*.json")):
+            data = json.loads(cfg.read_text())
+            for key, val in data.items():
+                for placeholder in self.PLACEHOLDER_ROLES:
+                    assert placeholder not in str(val), (
+                        f"{cfg.relative_to(REPO_ROOT)}: '{key}' references "
+                        f"placeholder role '{placeholder}' — update to the real role ARN"
+                    )
+
+
 # ── YAML syntax and registry structure ───────────────────────────────────────
 
 class TestYamlAndRegistry:

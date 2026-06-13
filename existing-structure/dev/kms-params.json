@@ -5,7 +5,7 @@
   { "ParameterKey": "DeletionWindowInDays", "ParameterValue": "30" },
   { "ParameterKey": "EnableKeyRotation",    "ParameterValue": "true" },
   { "ParameterKey": "KeyAdminArn",          "ParameterValue": "arn:aws:iam::641079926471:root" },
-  { "ParameterKey": "KeyUsageArn",          "ParameterValue": "arn:aws:iam::641079926471:role/github-actions-deploy" },
+  { "ParameterKey": "KeyUsageArn",          "ParameterValue": "arn:aws:iam::641079926471:role/tesco-ims-migration-deploy-role" },
   { "ParameterKey": "CostCentre",           "ParameterValue": "TESCO-IMS-PLATFORM" },
   { "ParameterKey": "ManagedBy",            "ParameterValue": "github-actions" }
 ]
