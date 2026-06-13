@@ -50,10 +50,10 @@ create_env() {
   echo "► Creating environment: ${env_name}"
 
   # Create/update environment via API
+  # Note: prevent_self_review cannot be set without a reviewer — omit it here
   gh api --method PUT \
     "/repos/${REPO}/environments/${env_name}" \
     --field "wait_timer=0" \
-    --field "prevent_self_review=false" \
     > /dev/null
 
   # Set required reviewer (the person running this script)
