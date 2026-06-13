@@ -75,6 +75,33 @@ class TestCfnLint:
                 assert pattern not in resources_section, \
                     f"{template_path.relative_to(REPO_ROOT)}: hardcoded '{pattern}' found in Resources section"
 
+    @pytest.mark.parametrize("template", [
+        str(p.relative_to(REPO_ROOT)) for p in ALL_TEMPLATES
+    ], ids=lambda p: p.replace("/", "·"))
+    def test_description_under_1024_bytes(self, template):
+        """
+        CloudFormation enforces a 1024-byte limit on the template Description field.
+        cfn-lint only checks character count and misses multi-byte Unicode chars
+        (e.g. box-drawing ─ is 3 bytes). This test catches the gap before any AWS call.
+        """
+        import re
+        content = Path(template).read_text(encoding="utf-8")
+        m = re.search(r'^Description\s*:\s*[>|]?-?\s*\n?((?:[ \t].+\n?)*|(?![\n]).+)',
+                      content, re.MULTILINE)
+        if not m:
+            return  # no Description field — nothing to check
+        # Extract value: strip key, strip leading whitespace from block scalars
+        block = content[m.start():]
+        next_key = re.search(r'\n(?:Parameters|Metadata|Resources|Outputs|Mappings|Conditions)\s*:', block)
+        raw = block[:next_key.start() if next_key else len(block)]
+        value = re.sub(r'^Description\s*:\s*[>|]?-?\s*', '', raw).strip()
+        value = re.sub(r'^[ \t]{1,2}', '', value, flags=re.MULTILINE)
+        byte_len = len(value.encode("utf-8"))
+        assert byte_len <= 1024, (
+            f"{template}: Description is {byte_len} bytes — exceeds CloudFormation's 1024-byte limit. "
+            f"Shorten the text (watch for Unicode box-drawing chars — each '─' costs 3 bytes)."
+        )
+
     def test_existing_templates_have_hardcoded_defaults(self):
         """Existing per-account templates should show the 'Default:' problem."""
         for template_path in sorted(EXISTING_DIR.rglob("*-template.yaml")):
