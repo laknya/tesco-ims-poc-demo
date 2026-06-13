@@ -184,19 +184,31 @@ class TestRequiredParameters:
 
 class TestCrossStackReference:
 
+    def test_s3_kms_key_arn_present(self):
+        """KmsKeyArn must be set — S3 bucket encryption depends on it."""
+        params = params_as_dict(resolve("dev", "shared-services", "s3-bucket"))
+        kms_arn = params.get("KmsKeyArn", "")
+        assert kms_arn.startswith("arn:aws:kms:"), \
+            f"KmsKeyArn should be a valid KMS ARN, got '{kms_arn}'"
+
+    def test_s3_kms_alias_matches_kms_stack_output(self):
+        """KmsKeyArn alias must match the alias name created by the KMS template."""
+        params = params_as_dict(resolve("dev", "shared-services", "s3-bucket"))
+        kms_arn = params.get("KmsKeyArn", "")
+        assert "tesco-ims-dev-platform" in kms_arn, \
+            f"KmsKeyArn '{kms_arn}' must reference alias/tesco-ims-dev-platform (set by KMS template)"
+
     def test_s3_vpc_stack_name_matches_naming_formula(self):
-        """VpcStackName must follow poc-NEW-networking-vpc-baseline-{account}."""
+        """
+        VpcStackName must resolve to the correct VPC stack for the account.
+        The S3 template imports VpcId via Fn::ImportValue using this name —
+        it must match the stack name that stage2 actually creates.
+        """
         params = params_as_dict(resolve("dev", "shared-services", "s3-bucket"))
         vpc_stack = params.get("VpcStackName", "")
         assert vpc_stack == "poc-NEW-networking-vpc-baseline-dev", \
-            f"VpcStackName should be 'poc-NEW-networking-vpc-baseline-dev', got '{vpc_stack}'"
-
-    def test_s3_vpc_stack_name_not_legacy_format(self):
-        """VpcStackName must NOT use the old short-form 'poc-NEW-vpc-dev'."""
-        params = params_as_dict(resolve("dev", "shared-services", "s3-bucket"))
-        vpc_stack = params.get("VpcStackName", "")
-        assert vpc_stack != "poc-NEW-vpc-dev", \
-            "VpcStackName still using legacy short-form name — update accounts/dev/shared-services/s3-bucket.json"
+            (f"VpcStackName '{vpc_stack}' does not match the expected VPC stack name. "
+             "S3 Fn::ImportValue will fail at deploy time if this is wrong.")
 
 
 # ── Error handling ────────────────────────────────────────────────────────────

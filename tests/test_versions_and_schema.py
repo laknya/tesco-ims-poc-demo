@@ -138,14 +138,25 @@ class TestSchemaValidation:
                 assert field in data.get("properties", {}), \
                     f"{schema_file}: required field '{field}' missing from properties"
 
+    def test_s3_schema_includes_kms_key_arn(self):
+        """KmsKeyArn must be required in the S3 module schema (encryption dependency)."""
+        schema = json.loads(
+            (MODULES_DIR / "shared-services" / "s3-bucket" / "parameters.schema.json")
+            .read_text()
+        )
+        assert "KmsKeyArn" in schema["required"], \
+            "KmsKeyArn must be required in s3-bucket schema (bucket encryption)"
+
     def test_s3_schema_includes_vpc_stack_name(self):
-        """VpcStackName must be required in the S3 module schema (cross-stack ref)."""
+        """VpcStackName must be required in the S3 module schema (cross-stack VPC reference)."""
         schema = json.loads(
             (MODULES_DIR / "shared-services" / "s3-bucket" / "parameters.schema.json")
             .read_text()
         )
         assert "VpcStackName" in schema["required"], \
-            "VpcStackName must be required in s3-bucket schema (cross-stack dependency)"
+            "VpcStackName must be required in s3-bucket schema (Fn::ImportValue of VpcId)"
+        assert "VpcStackName" in schema["properties"], \
+            "VpcStackName must be in s3-bucket schema properties"
 
     def test_invalid_account_config_detected(self, tmp_path, monkeypatch):
         """A config missing a required field should fail schema validation."""

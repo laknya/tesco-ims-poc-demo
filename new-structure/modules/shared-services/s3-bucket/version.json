@@ -2,7 +2,7 @@
   "version": "1.0.0",
   "type_name": "TescoIMS::SharedServices::S3Bucket",
   "released": "2026-06-12",
-  "template_hash": "sha256:aacf2a33812b763e7ef1a2e23c42852588c976d77451764903e6ae3efa388a20",
+  "template_hash": "sha256:627749ff436b90304e075c4b5788c3c6168d20ad7a8e160507a692e3a67c801d",
   "status": "default",
   "breaking_changes": [],
   "changelog": "Initial release. Replaces per-account s3-template.yaml copies. Bucket policy principals (BucketAdminArn, BucketWriterArn) externalized as JSON config parameters.",

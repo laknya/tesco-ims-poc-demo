@@ -215,6 +215,12 @@ class TestFullLocalPipeline:
             assert result.returncode == 0, \
                 f"Step failed: {' '.join(cmd)}\n{result.stdout[-500:]}\n{result.stderr[-500:]}"
 
+    def test_stage2_script_valid_bash_syntax(self):
+        """stage2-deploy-new.sh must have valid bash syntax (bash -n dry-parse)."""
+        result = run(["bash", "-n", "scripts/stage2-deploy-new.sh"])
+        assert result.returncode == 0, \
+            f"stage2-deploy-new.sh has a bash syntax error:\n{result.stderr}"
+
     def test_detect_changes_then_stage2_filter_consistency(self):
         """
         Simulate: PR changes s3-bucket config → detect_changes → stage2 module list.
@@ -243,3 +249,99 @@ class TestFullLocalPipeline:
         for module in changed:
             assert module in discoverable, \
                 f"Detected module '{module}' not in discover_new_modules(dev)"
+
+
+# ── Cross-stack dependency detection ─────────────────────────────────────────
+
+# The Python snippet embedded in stage2-deploy-new.sh extracts every resolved
+# parameter whose key ends in "StackName" and prints "KEY=VALUE" lines.
+# These tests verify that logic in isolation (no AWS, no bash needed).
+
+EXTRACT_DEPS_SNIPPET = """
+import json, sys
+params = json.load(open(sys.argv[1]))
+for p in params:
+    key = p.get('ParameterKey', '')
+    if key.endswith('StackName'):
+        print(f"{key}={p['ParameterValue']}")
+"""
+
+
+class TestCrossStackDependencyDetection:
+
+    def _extract_deps(self, resolved_path: str, tmp_path) -> list[str]:
+        """Run the extraction snippet against a resolved params file."""
+        import subprocess, sys
+        snippet_file = tmp_path / "extract_deps.py"
+        snippet_file.write_text(EXTRACT_DEPS_SNIPPET)
+        result = subprocess.run(
+            [sys.executable, str(snippet_file), resolved_path],
+            capture_output=True, text=True
+        )
+        assert result.returncode == 0, f"Snippet failed: {result.stderr}"
+        return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+    def test_s3_module_has_vpc_stack_dependency(self, tmp_path):
+        """
+        Resolved S3 params for dev must produce exactly one dependency:
+        VpcStackName pointing at the VPC stack.
+        The stage2 wait loop will pause until that stack is CREATE_COMPLETE.
+        """
+        out = str(tmp_path / "s3-resolved.json")
+        resolve("dev", "shared-services", "s3-bucket", out)
+        deps = self._extract_deps(out, tmp_path)
+        assert len(deps) == 1, \
+            f"Expected exactly 1 cross-stack dep for S3, got: {deps}"
+        assert deps[0] == "VpcStackName=poc-NEW-networking-vpc-baseline-dev", \
+            f"S3 dependency key=value wrong: {deps[0]}"
+
+    def test_vpc_module_has_no_stack_dependencies(self, tmp_path):
+        """
+        VPC is the root module — it must have zero *StackName dependencies.
+        If it did, it would wait for itself and hang the pipeline forever.
+        """
+        out = str(tmp_path / "vpc-resolved.json")
+        resolve("dev", "networking", "vpc-baseline", out)
+        deps = self._extract_deps(out, tmp_path)
+        assert deps == [], \
+            f"VPC module must have no cross-stack deps (it is the root), got: {deps}"
+
+    def test_kms_module_has_no_stack_dependencies(self, tmp_path):
+        """KMS module is also a root — it does not depend on any other stack."""
+        out = str(tmp_path / "kms-resolved.json")
+        resolve("dev", "security", "kms-key", out)
+        deps = self._extract_deps(out, tmp_path)
+        assert deps == [], \
+            f"KMS module must have no cross-stack deps, got: {deps}"
+
+    def test_dep_extraction_finds_multiple_stack_names(self, tmp_path):
+        """
+        If a future module has two *StackName params, both must be detected.
+        This test uses a synthetic resolved file to verify the logic scales.
+        """
+        import json
+        synthetic = tmp_path / "multi-dep.json"
+        synthetic.write_text(json.dumps([
+            {"ParameterKey": "AccountId",       "ParameterValue": "123456789012"},
+            {"ParameterKey": "VpcStackName",    "ParameterValue": "poc-NEW-networking-vpc-baseline-dev"},
+            {"ParameterKey": "LoggingStackName","ParameterValue": "poc-NEW-observability-logging-dev"},
+            {"ParameterKey": "BucketName",      "ParameterValue": "my-bucket"},
+        ]))
+        deps = self._extract_deps(str(synthetic), tmp_path)
+        assert len(deps) == 2, f"Expected 2 deps, got: {deps}"
+        assert "VpcStackName=poc-NEW-networking-vpc-baseline-dev"    in deps
+        assert "LoggingStackName=poc-NEW-observability-logging-dev"  in deps
+
+    def test_dep_extraction_ignores_non_stack_name_params(self, tmp_path):
+        """Params like BucketName, KmsKeyArn, Environment must not be detected as deps."""
+        import json
+        synthetic = tmp_path / "no-dep.json"
+        synthetic.write_text(json.dumps([
+            {"ParameterKey": "AccountId",   "ParameterValue": "123456789012"},
+            {"ParameterKey": "BucketName",  "ParameterValue": "my-bucket"},
+            {"ParameterKey": "KmsKeyArn",   "ParameterValue": "arn:aws:kms:eu-west-1:123:key/abc"},
+            {"ParameterKey": "Environment", "ParameterValue": "dev"},
+        ]))
+        deps = self._extract_deps(str(synthetic), tmp_path)
+        assert deps == [], \
+            f"Non-StackName params must not be treated as dependencies, got: {deps}"

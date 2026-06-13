@@ -82,12 +82,13 @@ Parameters:
     Default: "github-actions"                      # duplicated in all 68 files
 
   # ── Cross-stack reference ─────────────────────────────────────────────
-  # VPC stack name whose exported VpcId the bucket policy will import.
-  # Default is hardcoded per-file — change the VPC stack name? Edit 68 files.
-  # In the new structure this is a config parameter; no template edit needed.
+  # Points to the per-account VPC stack whose VpcId is imported below.
+  # In the new structure this is resolved automatically by the 4-layer system;
+  # here each of 68 files hardcodes its own value — another copy-paste risk.
   VpcStackName:
     Type: String
-    Default: "poc-EXISTING-vpc-dev"                # hardcoded per file
+    Default: "poc-EXISTING-networking-vpc-baseline-dev"  # hardcoded per file
+
 
 Resources:
   S3Bucket:
@@ -156,13 +157,11 @@ Resources:
             Resource:
               - !GetAtt S3Bucket.Arn
               - !Sub '${S3Bucket.Arn}/*'
-          # Cross-stack reference: VpcId imported from the VPC stack.
-          # Denies all S3 requests not originating from the VPC.
-          # Problem: VpcStackName default is hardcoded here — edit 68 files to rename.
+
           - Sid: DenyNonVpcAccess
             Effect: Deny
-            Principal: '*'
-            Action: 's3:*'
+            Principal: "*"
+            Action: "s3:*"
             Resource:
               - !GetAtt S3Bucket.Arn
               - !Sub '${S3Bucket.Arn}/*'

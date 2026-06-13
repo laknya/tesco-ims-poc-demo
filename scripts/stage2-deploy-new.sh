@@ -112,8 +112,68 @@ for domain_module in "${MODULES_TO_DEPLOY[@]}"; do
     --module  "${MODULE}" \
     --output  "${RESOLVED}"
 
-  # Step B: Deploy from the ONE master template
-  echo "  └─ Step B: Deploying from master template [ModuleVersion=${VERSION}]..."
+  # Step B: Wait for any cross-stack dependencies before deploying.
+  # Any resolved parameter ending in "StackName" is treated as a dependency:
+  # the script polls until that stack reaches a ready or failed terminal state.
+  # This makes parallel CI matrix jobs safe regardless of which module is added next.
+  DEPS=$(python3 -c "
+import json, sys
+params = json.load(open('${RESOLVED}'))
+for p in params:
+    key = p.get('ParameterKey', '')
+    if key.endswith('StackName'):
+        print(f\"{key}={p['ParameterValue']}\")
+" 2>/dev/null || true)
+
+  for dep in ${DEPS}; do
+    DEP_PARAM="${dep%%=*}"    # e.g. VpcStackName
+    DEP_STACK="${dep##*=}"    # e.g. poc-NEW-networking-vpc-baseline-dev
+
+    echo "  ├─ Cross-stack dependency detected"
+    echo "  │  Parameter : ${DEP_PARAM}"
+    echo "  │  Stack     : ${DEP_STACK}"
+    echo "  │  Waiting for '${DEP_STACK}' to be ready before deploying ${MODULE}..."
+
+    WAITED=0
+    MAX_WAIT=600
+    while [ "${WAITED}" -lt "${MAX_WAIT}" ]; do
+      DEP_STATUS=$(aws cloudformation describe-stacks \
+        --stack-name "${DEP_STACK}" --region "${REGION}" \
+        --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+
+      case "${DEP_STATUS}" in
+        CREATE_COMPLETE|UPDATE_COMPLETE)
+          echo "  │  ✅ '${DEP_STACK}' is ready (${DEP_STATUS}) — continuing with ${MODULE}"
+          break ;;
+        ROLLBACK_COMPLETE|ROLLBACK_FAILED|DELETE_COMPLETE|CREATE_FAILED|UPDATE_FAILED|UPDATE_ROLLBACK_FAILED)
+          echo ""
+          echo "  ❌ CANCELLED — dependency '${DEP_STACK}' is in a failed state: ${DEP_STATUS}"
+          echo "     The stack '${MODULE}' requires '${DEP_STACK}' to be healthy."
+          echo "     Fix '${DEP_STACK}' first, then re-run this stage."
+          echo ""
+          exit 1 ;;
+        DOES_NOT_EXIST)
+          echo "  │  ⏳ Waiting for '${DEP_STACK}' to be created... (${WAITED}s elapsed, max ${MAX_WAIT}s)"
+          sleep 20
+          WAITED=$((WAITED + 20)) ;;
+        *)
+          echo "  │  ⏳ '${DEP_STACK}' status: ${DEP_STATUS} — waiting 20s... (${WAITED}s elapsed)"
+          sleep 20
+          WAITED=$((WAITED + 20)) ;;
+      esac
+    done
+
+    if [ "${WAITED}" -ge "${MAX_WAIT}" ]; then
+      echo ""
+      echo "  ❌ CANCELLED — timed out after ${MAX_WAIT}s waiting for '${DEP_STACK}'"
+      echo "     '${MODULE}' cannot be deployed until its dependency is ready."
+      echo ""
+      exit 1
+    fi
+  done
+
+  # Step C: Deploy from the ONE master template
+  echo "  └─ Step C: Deploying from master template [ModuleVersion=${VERSION}]..."
 
   EXTRA_CAPS=""
   [[ "${MODULE}" == "kms-key" ]] && EXTRA_CAPS="--capabilities CAPABILITY_NAMED_IAM"

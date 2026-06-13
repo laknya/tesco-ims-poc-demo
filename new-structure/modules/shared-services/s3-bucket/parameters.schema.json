@@ -27,6 +27,6 @@
     "EnableAccessLogging":    { "type": "string", "enum": ["true", "false"] },
     "CostCentre":             { "type": "string" },
     "ManagedBy":              { "type": "string" },
-    "VpcStackName":           { "type": "string", "description": "Name of the VPC stack whose VpcId export the bucket policy imports (cross-stack reference)" }
+    "VpcStackName":           { "type": "string" }
   }
 }
