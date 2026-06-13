@@ -156,6 +156,46 @@ class TestCfnLint:
         assert "VpcId" in content, "VPC template must export VpcId"
         assert "Export:" in content
 
+    def test_s3_module_has_import_config(self):
+        """
+        S3 bucket is globally unique and cannot be recreated alongside an existing stack.
+        The module must have import-config.json so stage 2 uses CFN Resource Import
+        instead of a regular deploy (which would fail with EarlyValidation::ResourceExistenceCheck).
+        """
+        import_cfg = MODULES_DIR / "shared-services" / "s3-bucket" / "import-config.json"
+        assert import_cfg.exists(), \
+            "S3 module is missing import-config.json. Stage 2 requires it to use " \
+            "--change-set-type IMPORT and avoid S3 bucket name collision."
+        cfg = json.loads(import_cfg.read_text())
+        assert "resources_to_import" in cfg, "import-config.json must have resources_to_import"
+        assert len(cfg["resources_to_import"]) > 0, "resources_to_import must not be empty"
+        entry = cfg["resources_to_import"][0]
+        assert entry["ResourceType"] == "AWS::S3::Bucket"
+        assert entry["LogicalResourceId"] == "S3Bucket"
+
+    def test_critical_new_resources_have_deletion_policy_retain(self):
+        """
+        Key infrastructure resources in new-structure templates must have
+        DeletionPolicy: Retain so an accidental stack delete does not destroy VPCs,
+        KMS keys, or S3 buckets.  Also required by CloudFormation for any resource
+        being imported via --change-set-type IMPORT.
+        """
+        must_retain = {
+            "networking/vpc-baseline": ["AWS::EC2::VPC", "AWS::EC2::Subnet",
+                                        "AWS::EC2::InternetGateway", "AWS::EC2::RouteTable"],
+            "security/kms-key":        ["AWS::KMS::Key"],
+            "shared-services/s3-bucket": ["AWS::S3::Bucket"],
+        }
+        for module_path, resource_types in must_retain.items():
+            template = MODULES_DIR / module_path / "template.yaml"
+            content = template.read_text()
+            for rtype in resource_types:
+                assert f"Type: {rtype}" in content, \
+                    f"{template.name}: expected resource Type: {rtype} not found"
+                assert "DeletionPolicy: Retain" in content, \
+                    (f"{template.relative_to(REPO_ROOT)}: missing DeletionPolicy: Retain. "
+                     f"Add it to protect {rtype} from accidental stack deletion.")
+
 
 # -- JSON config syntax --------------------------------------------------------
 

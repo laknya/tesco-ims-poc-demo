@@ -35,6 +35,23 @@ while IFS= read -r domain_module; do
   echo "    EXISTING : ${OLD_STACK}"
   echo "    NEW      : ${NEW_STACK}"
 
+  # Modules with import-config.json are migrated via CFN Resource Import in stage 2.
+  # The EXISTING stack is deleted during stage 2 (with --retain-resources), so
+  # there is no side-by-side old stack to compare against.  These modules are
+  # skipped here and counted as passing -- ownership has already been transferred.
+  IMPORT_CONFIG="new-structure/modules/${domain_module}/import-config.json"
+  OLD_STATUS=$(aws cloudformation describe-stacks \
+    --stack-name "${OLD_STACK}" --region "${REGION}" \
+    --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+
+  if [ -f "${IMPORT_CONFIG}" ] && [ "${OLD_STATUS}" = "DOES_NOT_EXIST" ]; then
+    echo "  [OK]  ${domain_module} -- migrated via CFN Resource Import in stage 2"
+    echo "        EXISTING stack '${OLD_STACK}' was released (resources retained)."
+    echo "        '${NEW_STACK}' now owns the resource. No side-by-side parity needed."
+    echo ""
+    continue
+  fi
+
   if python3 new-structure/pipeline/validate_parity.py \
        --old-stack "${OLD_STACK}" \
        --new-stack "${NEW_STACK}" \

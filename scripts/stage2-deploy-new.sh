@@ -246,29 +246,134 @@ for p in params:
     done
   done
 
-  # Step C: Deploy from the ONE master template
-  echo "  +- Step C: Deploying from master template [ModuleVersion=${VERSION}]..."
+  # Step C: Deploy (or import) from the ONE master template.
+  #
+  # If the module directory contains an import-config.json AND the new stack
+  # does not yet exist, Stage 2 uses CloudFormation Resource Import instead of
+  # a regular deploy.  This is the correct production pattern for globally unique
+  # resources (e.g. S3 bucket names) that cannot be recreated:
+  #
+  #   1. Release the resource from the EXISTING stack using --retain-resources
+  #      (the resource is NOT deleted -- only CFN ownership is released).
+  #   2. Import the retained resource into the NEW stack via --change-set-type IMPORT.
+  #
+  # Any module without import-config.json (VPC, KMS) uses the standard deploy path.
+
+  IMPORT_CONFIG="new-structure/modules/${domain_module}/import-config.json"
+  OLD_STACK=$(cfn_stack_name "EXISTING" "${DOMAIN}" "${MODULE}" "${ACCOUNT}")
+
+  # Check whether the new stack already exists (re-run idempotency).
+  NEW_STACK_STATUS=$(aws cloudformation describe-stacks \
+    --stack-name "${STACK}" --region "${REGION}" \
+    --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
 
   # Detect whether this template creates IAM resources (requires capabilities).
-  # Generic check: any AWS::IAM:: resource type triggers CAPABILITY_NAMED_IAM.
   EXTRA_CAPS=""
   if grep -q "Type: AWS::IAM::" "${TEMPLATE}" 2>/dev/null; then
     EXTRA_CAPS="--capabilities CAPABILITY_NAMED_IAM"
   fi
 
-  # shellcheck disable=SC2086
-  aws cloudformation deploy \
-    --stack-name  "${STACK}" \
-    --template-file "${TEMPLATE}" \
-    --parameter-overrides "file://${RESOLVED}" \
-    --tags POCStage=new Account="${ACCOUNT}" \
-           Domain="${DOMAIN}" Module="${MODULE}" \
-           ModuleVersion="${VERSION}" ModuleType="${TYPE}" \
-           Repo=tesco-ims-poc-demo \
-    --region "${REGION}" \
-    --no-fail-on-empty-changeset \
-    ${EXTRA_CAPS}
-  echo "     [OK] ${STACK}  [ModuleVersion=${VERSION}]"
+  if [ -f "${IMPORT_CONFIG}" ] && [ "${NEW_STACK_STATUS}" = "DOES_NOT_EXIST" ]; then
+    echo "  +- Step C: Migrating via CFN Resource Import [ModuleVersion=${VERSION}]..."
+    echo "  |  Globally unique resources cannot be recreated alongside the existing"
+    echo "  |  stack. CFN Import transfers ownership without deleting the resource."
+
+    # Build --resources-to-import JSON from import-config + resolved params.
+    RESOURCES_TO_IMPORT=$(python3 -c "
+import json, sys
+cfg    = json.load(open('${IMPORT_CONFIG}'))
+params = {p['ParameterKey']: p['ParameterValue']
+          for p in json.load(open('${RESOLVED}'))}
+result = []
+for r in cfg['resources_to_import']:
+    result.append({
+        'ResourceType':      r['ResourceType'],
+        'LogicalResourceId': r['LogicalResourceId'],
+        'ResourceIdentifier': {r['IdentifierKey']: params[r['IdentifierParam']]}
+    })
+print(json.dumps(result))
+")
+    echo "  |  Resources to import: ${RESOURCES_TO_IMPORT}"
+
+    # Release the resource from the existing stack (resources are RETAINED).
+    OLD_STACK_STATUS=$(aws cloudformation describe-stacks \
+      --stack-name "${OLD_STACK}" --region "${REGION}" \
+      --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+
+    if [ "${OLD_STACK_STATUS}" != "DOES_NOT_EXIST" ]; then
+      RETAIN_IDS=$(python3 -c "
+import json
+cfg = json.load(open('${IMPORT_CONFIG}'))
+print(' '.join(r['LogicalResourceId'] for r in cfg['resources_to_import']))
+")
+      echo "  |  Releasing '${OLD_STACK}' with --retain-resources ${RETAIN_IDS}..."
+      echo "  |  (The resource is kept in AWS -- only CFN ownership is released)"
+      aws cloudformation delete-stack \
+        --stack-name "${OLD_STACK}" \
+        --retain-resources ${RETAIN_IDS} \
+        --region "${REGION}"
+      aws cloudformation wait stack-delete-complete \
+        --stack-name "${OLD_STACK}" \
+        --region "${REGION}"
+      echo "  |  [OK] '${OLD_STACK}' deleted, resources retained in AWS"
+    else
+      echo "  |  No existing stack found -- resource may be unmanaged, importing directly"
+    fi
+
+    # Import the retained resource into the new stack.
+    CHANGESET_NAME="import-$(date +%s)"
+    echo "  |  Creating IMPORT changeset '${CHANGESET_NAME}'..."
+    # shellcheck disable=SC2086
+    aws cloudformation create-change-set \
+      --stack-name         "${STACK}" \
+      --change-set-name    "${CHANGESET_NAME}" \
+      --change-set-type    IMPORT \
+      --resources-to-import "${RESOURCES_TO_IMPORT}" \
+      --template-body      "file://${TEMPLATE}" \
+      --parameters         "file://${RESOLVED}" \
+      --tags "Key=POCStage,Value=new" "Key=Account,Value=${ACCOUNT}" \
+             "Key=Domain,Value=${DOMAIN}" "Key=Module,Value=${MODULE}" \
+             "Key=ModuleVersion,Value=${VERSION}" "Key=ModuleType,Value=${TYPE}" \
+             "Key=Repo,Value=tesco-ims-poc-demo" \
+      --region "${REGION}" \
+      ${EXTRA_CAPS}
+
+    echo "  |  Waiting for changeset to be ready..."
+    aws cloudformation wait change-set-create-complete \
+      --stack-name      "${STACK}" \
+      --change-set-name "${CHANGESET_NAME}" \
+      --region          "${REGION}"
+
+    echo "  |  Executing import changeset..."
+    aws cloudformation execute-change-set \
+      --stack-name      "${STACK}" \
+      --change-set-name "${CHANGESET_NAME}" \
+      --region          "${REGION}"
+
+    echo "  |  Waiting for stack to reach CREATE_COMPLETE..."
+    aws cloudformation wait stack-create-complete \
+      --stack-name "${STACK}" \
+      --region     "${REGION}"
+
+    echo "     [OK] ${STACK} imported [ModuleVersion=${VERSION}]"
+
+  else
+    echo "  +- Step C: Deploying from master template [ModuleVersion=${VERSION}]..."
+    # shellcheck disable=SC2086
+    aws cloudformation deploy \
+      --stack-name        "${STACK}" \
+      --template-file     "${TEMPLATE}" \
+      --parameter-overrides "file://${RESOLVED}" \
+      --tags POCStage=new Account="${ACCOUNT}" \
+             Domain="${DOMAIN}" Module="${MODULE}" \
+             ModuleVersion="${VERSION}" ModuleType="${TYPE}" \
+             Repo=tesco-ims-poc-demo \
+      --region "${REGION}" \
+      --no-fail-on-empty-changeset \
+      ${EXTRA_CAPS}
+    echo "     [OK] ${STACK}  [ModuleVersion=${VERSION}]"
+  fi
+
   DEPLOYED+=("${STACK}")
   echo ""
 
