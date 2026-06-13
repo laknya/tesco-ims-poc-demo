@@ -253,9 +253,12 @@ for p in params:
   # a regular deploy.  This is the correct production pattern for globally unique
   # resources (e.g. S3 bucket names) that cannot be recreated:
   #
-  #   1. Release the resource from the EXISTING stack using --retain-resources
-  #      (the resource is NOT deleted -- only CFN ownership is released).
-  #   2. Import the retained resource into the NEW stack via --change-set-type IMPORT.
+  #   1. Delete the EXISTING stack with a plain delete-stack.
+  #      DeletionPolicy: Retain on the resource in the EXISTING template means
+  #      CloudFormation keeps the resource in AWS -- only CFN ownership is released.
+  #      NOTE: --retain-resources is only valid for DELETE_FAILED stacks; the
+  #      correct mechanism for a normal delete is DeletionPolicy: Retain in the template.
+  #   2. Import the now-unmanaged resource into the NEW stack via --change-set-type IMPORT.
   #
   # Any module without import-config.json (VPC, KMS) uses the standard deploy path.
 
@@ -301,21 +304,16 @@ print(json.dumps(result))
       --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
 
     if [ "${OLD_STACK_STATUS}" != "DOES_NOT_EXIST" ]; then
-      RETAIN_IDS=$(python3 -c "
-import json
-cfg = json.load(open('${IMPORT_CONFIG}'))
-print(' '.join(r['LogicalResourceId'] for r in cfg['resources_to_import']))
-")
-      echo "  |  Releasing '${OLD_STACK}' with --retain-resources ${RETAIN_IDS}..."
-      echo "  |  (The resource is kept in AWS -- only CFN ownership is released)"
+      echo "  |  Deleting '${OLD_STACK}'..."
+      echo "  |  DeletionPolicy: Retain in the template keeps the resource in AWS."
+      echo "  |  Only CFN ownership is released -- no AWS resource is deleted."
       aws cloudformation delete-stack \
         --stack-name "${OLD_STACK}" \
-        --retain-resources ${RETAIN_IDS} \
         --region "${REGION}"
       aws cloudformation wait stack-delete-complete \
         --stack-name "${OLD_STACK}" \
         --region "${REGION}"
-      echo "  |  [OK] '${OLD_STACK}' deleted, resources retained in AWS"
+      echo "  |  [OK] '${OLD_STACK}' CFN stack deleted, resource retained in AWS"
     else
       echo "  |  No existing stack found -- resource may be unmanaged, importing directly"
     fi
