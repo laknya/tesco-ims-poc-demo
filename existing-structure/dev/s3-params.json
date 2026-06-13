@@ -2,7 +2,7 @@
   { "ParameterKey": "AccountId",              "ParameterValue": "641079926471" },
   { "ParameterKey": "Environment",            "ParameterValue": "dev" },
   { "ParameterKey": "BucketName",             "ParameterValue": "tesco-ims-platform-641079926471-dev" },
-  { "ParameterKey": "KmsKeyArn",              "ParameterValue": "arn:aws:kms:eu-west-1:641079926471:alias/tesco-ims-dev" },
+  { "ParameterKey": "KmsKeyArn",              "ParameterValue": "arn:aws:kms:eu-west-1:641079926471:alias/tesco-ims-dev-platform" },
   { "ParameterKey": "BucketAdminArn",         "ParameterValue": "arn:aws:iam::641079926471:root" },
   { "ParameterKey": "BucketWriterArn",        "ParameterValue": "arn:aws:iam::641079926471:role/tesco-ims-migration-deploy-role" },
   { "ParameterKey": "EnableVersioning",       "ParameterValue": "Enabled" },
