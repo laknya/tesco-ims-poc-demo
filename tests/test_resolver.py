@@ -196,15 +196,16 @@ class TestCrossStackReference:
             f"KmsStackName '{kms_stack}' must point to a new-structure KMS stack"
 
     def test_s3_kms_alias_matches_kms_stack_output(self):
-        """KeyAliasName in the KMS stack must carry the -new suffix.
-        This ensures the KMS alias is unique and does not conflict with the
-        existing-structure stack alias during side-by-side migration.
+        """KeyAliasName in the KMS stack must be a valid tesco-ims alias.
+        With the CFN Resource Import approach, the NEW stack imports the SAME
+        alias as the EXISTING stack -- no -new suffix is needed or wanted.
+        The alias must start with 'alias/tesco-ims-' to match the naming convention.
         """
         params = params_as_dict(resolve("dev", "security", "kms-key"))
         alias = params.get("KeyAliasName", "")
-        assert alias.endswith("-new"), \
-            (f"KeyAliasName '{alias}' must end with -new "
-             "to avoid alias conflict with the existing-structure KMS stack")
+        assert alias.startswith("alias/tesco-ims-"), \
+            (f"KeyAliasName '{alias}' must start with 'alias/tesco-ims-' "
+             "to match the Tesco IMS KMS alias naming convention")
 
     def test_s3_kms_stack_name_matches_naming_formula(self):
         """

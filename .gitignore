@@ -1,4 +1,7 @@
-# Generated files — recreated from registry at deploy time
+# Claude Code worktrees -- ephemeral agent scratch space, not for version control
+.claude/worktrees/
+
+# Generated files -- recreated from registry at deploy time
 new-structure/config/generated/
 
 # Markdown docs — kept locally, not version-controlled (README.md is the exception)

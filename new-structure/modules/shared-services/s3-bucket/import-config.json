@@ -1,12 +1,13 @@
 {
   "migration_type": "import",
-  "description": "S3 bucket names are globally unique. CloudFormation Resource Import transfers ownership of the existing bucket from the EXISTING stack to the NEW module stack without recreating it. Stage 2 automatically detects this file and uses --change-set-type IMPORT instead of a regular deploy.",
+  "description": "S3 bucket: only S3Bucket is imported (S3BucketPolicy is not CFN-importable and is created fresh). Bucket name is known from resolved params so no stack lookup is needed.",
   "resources_to_import": [
     {
       "ResourceType": "AWS::S3::Bucket",
       "LogicalResourceId": "S3Bucket",
-      "IdentifierKey": "BucketName",
-      "IdentifierParam": "BucketName"
+      "Identifiers": [
+        {"Key": "BucketName", "Source": "param", "Param": "BucketName"}
+      ]
     }
   ]
 }

@@ -1,0 +1,85 @@
+{
+  "migration_type": "import",
+  "description": "VPC baseline: all 11 EC2 resources are imported from the EXISTING stack. Physical IDs are resolved via describe-stack-resource before the EXISTING stack is deleted.",
+  "resources_to_import": [
+    {
+      "ResourceType": "AWS::EC2::VPC",
+      "LogicalResourceId": "VPC",
+      "Identifiers": [
+        {"Key": "VpcId", "Source": "stack-resource", "StackLogicalId": "VPC"}
+      ]
+    },
+    {
+      "ResourceType": "AWS::EC2::InternetGateway",
+      "LogicalResourceId": "InternetGateway",
+      "Identifiers": [
+        {"Key": "InternetGatewayId", "Source": "stack-resource", "StackLogicalId": "InternetGateway"}
+      ]
+    },
+    {
+      "ResourceType": "AWS::EC2::VPCGatewayAttachment",
+      "LogicalResourceId": "GatewayAttachment",
+      "Identifiers": [
+        {"Key": "VpcId", "Source": "stack-resource", "StackLogicalId": "VPC"},
+        {"Key": "InternetGatewayId", "Source": "stack-resource", "StackLogicalId": "InternetGateway"}
+      ]
+    },
+    {
+      "ResourceType": "AWS::EC2::Subnet",
+      "LogicalResourceId": "PublicSubnetA",
+      "Identifiers": [
+        {"Key": "SubnetId", "Source": "stack-resource", "StackLogicalId": "PublicSubnetA"}
+      ]
+    },
+    {
+      "ResourceType": "AWS::EC2::Subnet",
+      "LogicalResourceId": "PublicSubnetB",
+      "Identifiers": [
+        {"Key": "SubnetId", "Source": "stack-resource", "StackLogicalId": "PublicSubnetB"}
+      ]
+    },
+    {
+      "ResourceType": "AWS::EC2::Subnet",
+      "LogicalResourceId": "PrivateSubnetA",
+      "Identifiers": [
+        {"Key": "SubnetId", "Source": "stack-resource", "StackLogicalId": "PrivateSubnetA"}
+      ]
+    },
+    {
+      "ResourceType": "AWS::EC2::Subnet",
+      "LogicalResourceId": "PrivateSubnetB",
+      "Identifiers": [
+        {"Key": "SubnetId", "Source": "stack-resource", "StackLogicalId": "PrivateSubnetB"}
+      ]
+    },
+    {
+      "ResourceType": "AWS::EC2::RouteTable",
+      "LogicalResourceId": "PublicRouteTable",
+      "Identifiers": [
+        {"Key": "RouteTableId", "Source": "stack-resource", "StackLogicalId": "PublicRouteTable"}
+      ]
+    },
+    {
+      "ResourceType": "AWS::EC2::Route",
+      "LogicalResourceId": "PublicRoute",
+      "Identifiers": [
+        {"Key": "RouteTableId", "Source": "stack-resource", "StackLogicalId": "PublicRouteTable"},
+        {"Key": "DestinationCidrBlock", "Source": "literal", "Value": "0.0.0.0/0"}
+      ]
+    },
+    {
+      "ResourceType": "AWS::EC2::SubnetRouteTableAssociation",
+      "LogicalResourceId": "PublicSubnetAAssoc",
+      "Identifiers": [
+        {"Key": "Id", "Source": "stack-resource", "StackLogicalId": "PublicSubnetAAssoc"}
+      ]
+    },
+    {
+      "ResourceType": "AWS::EC2::SubnetRouteTableAssociation",
+      "LogicalResourceId": "PublicSubnetBAssoc",
+      "Identifiers": [
+        {"Key": "Id", "Source": "stack-resource", "StackLogicalId": "PublicSubnetBAssoc"}
+      ]
+    }
+  ]
+}

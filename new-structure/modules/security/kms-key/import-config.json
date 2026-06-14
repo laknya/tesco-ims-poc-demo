@@ -1,0 +1,20 @@
+{
+  "migration_type": "import",
+  "description": "KMS key module: KMSKey imported by physical key ID, KMSAlias imported by alias name. Both are retained (DeletionPolicy: Retain) when the EXISTING stack is deleted, then adopted into the NEW stack.",
+  "resources_to_import": [
+    {
+      "ResourceType": "AWS::KMS::Key",
+      "LogicalResourceId": "KMSKey",
+      "Identifiers": [
+        {"Key": "KeyId", "Source": "stack-resource", "StackLogicalId": "KMSKey"}
+      ]
+    },
+    {
+      "ResourceType": "AWS::KMS::Alias",
+      "LogicalResourceId": "KMSAlias",
+      "Identifiers": [
+        {"Key": "AliasName", "Source": "stack-resource", "StackLogicalId": "KMSAlias"}
+      ]
+    }
+  ]
+}

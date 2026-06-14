@@ -130,13 +130,6 @@ Resources:
 
   S3BucketPolicy:
     Type: AWS::S3::BucketPolicy
-    # DeletionPolicy: Retain -- the bucket policy has a VPC-only deny that blocks
-    # s3:DeleteBucketPolicy from GitHub Actions (which runs outside the VPC).
-    # Retaining avoids the AccessDenied DELETE_FAILED. The NEW stack's policy
-    # replaces this one when it deploys.
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    # Explicit DependsOn ensures CloudFormation creates S3Bucket first.
     DependsOn: S3Bucket
     Properties:
       Bucket: !Ref S3Bucket
@@ -163,7 +156,6 @@ Resources:
             Resource:
               - !GetAtt S3Bucket.Arn
               - !Sub '${S3Bucket.Arn}/*'
-
           - Sid: DenyNonVpcAccess
             Effect: Deny
             Principal: "*"
@@ -175,6 +167,7 @@ Resources:
               StringNotEquals:
                 aws:SourceVpc:
                   Fn::ImportValue: !Sub "${VpcStackName}-VpcId"
+                aws:PrincipalAccount: !Ref AccountId
 
 Outputs:
   BucketName:
