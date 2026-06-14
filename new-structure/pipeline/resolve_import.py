@@ -109,8 +109,16 @@ def _lookup_ec2_by_tag(resource_type, stack_name, logical_id, ec2):
     return None
 
 
-def _lookup_kms_by_tag(resource_type, stack_name, logical_id, kms):
+def _lookup_kms_by_tag(resource_type, stack_name, logical_id, kms, params, stack_cache):
     if resource_type == "AWS::KMS::Key":
+        # aws:cloudformation:* are system tags -- AWS does NOT return them via
+        # list_resource_tags. Use user-defined tags set by the CFN template instead.
+        env = params.get("Environment", "")
+        expected_name = f"tesco-ims-{env}-platform-key" if env else None
+        if not expected_name:
+            print(f"    [WARN] Cannot derive KMS key name without Environment param",
+                  file=sys.stderr)
+            return None
         try:
             paginator = kms.get_paginator("list_keys")
             for page in paginator.paginate():
@@ -118,21 +126,40 @@ def _lookup_kms_by_tag(resource_type, stack_name, logical_id, kms):
                     try:
                         tags_r = kms.list_resource_tags(KeyId=key["KeyId"])
                         tags = {t["TagKey"]: t["TagValue"] for t in tags_r.get("Tags", [])}
-                        if (tags.get("aws:cloudformation:stack-name") == stack_name
-                                and tags.get("aws:cloudformation:logical-id") == logical_id):
+                        if tags.get("Name") == expected_name:
                             return key["KeyId"]
                     except ClientError:
                         pass
         except ClientError as exc:
             print(f"    [WARN] KMS tag lookup failed: {exc}", file=sys.stderr)
+
     elif resource_type == "AWS::KMS::Alias":
+        # KMS aliases are not taggable. Derive the expected alias name from params:
+        #   NEW params file: KeyAliasName is explicit
+        #   EXISTING params file: derive from Environment -> alias/tesco-ims-{env}-platform
+        alias_name = params.get("KeyAliasName")
+        if not alias_name:
+            env = params.get("Environment", "")
+            if env:
+                alias_name = f"alias/tesco-ims-{env}-platform"
+        if not alias_name:
+            # Last resort: if KMSKey was already resolved, list its aliases
+            key_id = stack_cache.get("KMSKey")
+            if key_id:
+                try:
+                    r = kms.list_aliases(KeyId=key_id)
+                    for alias in r.get("Aliases", []):
+                        if alias.get("AliasName", "").startswith("alias/tesco-ims"):
+                            return alias["AliasName"]
+                except ClientError as exc:
+                    print(f"    [WARN] KMS alias-by-key lookup failed: {exc}", file=sys.stderr)
+            return None
         try:
             paginator = kms.get_paginator("list_aliases")
             for page in paginator.paginate():
                 for alias in page["Aliases"]:
-                    if alias.get("AliasName", "").startswith("alias/tesco-ims"):
-                        # Match by the alias name we'd expect for this stack
-                        return alias["AliasName"]
+                    if alias.get("AliasName") == alias_name:
+                        return alias_name
         except ClientError as exc:
             print(f"    [WARN] KMS alias lookup failed: {exc}", file=sys.stderr)
     return None
@@ -144,14 +171,16 @@ def _lookup_s3_by_param(resource_type, params):
     return None
 
 
-def lookup_by_cfn_tag(resource_type, stack_name, logical_id, region, params):
+def lookup_by_cfn_tag(resource_type, stack_name, logical_id, region, params, stack_cache=None):
     """Locate a retained resource using CFN tags or param values."""
+    if stack_cache is None:
+        stack_cache = {}
     if resource_type.startswith("AWS::EC2::"):
         ec2 = boto3.client("ec2", region_name=region)
         return _lookup_ec2_by_tag(resource_type, stack_name, logical_id, ec2)
     elif resource_type.startswith("AWS::KMS::"):
         kms = boto3.client("kms", region_name=region)
-        return _lookup_kms_by_tag(resource_type, stack_name, logical_id, kms)
+        return _lookup_kms_by_tag(resource_type, stack_name, logical_id, kms, params, stack_cache)
     elif resource_type == "AWS::S3::Bucket":
         return _lookup_s3_by_param(resource_type, params)
     return None
@@ -209,7 +238,8 @@ def resolve_identifier(id_spec, resource_type, stack_name, stack_cache,
 
         # Tag-based fallback
         print(f"    {logical_id}: stack gone, trying tag lookup...")
-        physical_id = lookup_by_cfn_tag(resource_type, stack_name, logical_id, region, params)
+        physical_id = lookup_by_cfn_tag(resource_type, stack_name, logical_id, region, params,
+                                        stack_cache)
         if not physical_id:
             print(
                 f"  [FAIL] Could not locate '{logical_id}' ({resource_type}) "
