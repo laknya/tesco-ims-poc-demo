@@ -172,6 +172,10 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
 
+  # PublicRoute is RETAINED (Option A): AWS::EC2::Route is not a CFN-importable
+  # type. To migrate with ZERO traffic disruption, the route is never deleted --
+  # it survives the EXISTING stack deletion and is left in place as an
+  # adopted-but-unmanaged resource (the NEW template intentionally omits it).
   PublicRoute:
     Type: AWS::EC2::Route
     DeletionPolicy: Retain

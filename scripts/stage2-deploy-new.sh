@@ -376,109 +376,20 @@ for p in params:
   fi
 
   if [ -f "${IMPORT_CONFIG}" ] && [ -f "${IMPORT_FILE}" ]; then
-    # Import path: use pre-resolved identifiers from Pass B.
+    # Import path: two-phase (Phase 1 filtered IMPORT + Phase 2 full UPDATE).
+    # Physical IDs were resolved in Pass B from the EXISTING stack.
+    # Non-importable resources (Route, BucketPolicy) are created fresh in Phase 2.
     echo "  +- Step D: Migrating via CFN Resource Import [ModuleVersion=${VERSION}]..."
-    echo "  |  Physical resource IDs resolved in Pass B from EXISTING stack."
 
-    CHANGESET_NAME="import-$(date +%s)"
-    echo "  |  Creating IMPORT changeset '${CHANGESET_NAME}'..."
-
-    RESOURCES_TO_IMPORT=$(cat "${IMPORT_FILE}")
-
-    # shellcheck disable=SC2086
-    aws cloudformation create-change-set \
-      --stack-name         "${NEW_STACK}" \
-      --change-set-name    "${CHANGESET_NAME}" \
-      --change-set-type    IMPORT \
-      --resources-to-import "${RESOURCES_TO_IMPORT}" \
-      --template-body      "file://${TEMPLATE}" \
-      --parameters         "file://${RESOLVED}" \
-      --tags "Key=POCStage,Value=new" "Key=Account,Value=${ACCOUNT}" \
-             "Key=Domain,Value=${DOMAIN}" "Key=Module,Value=${MODULE}" \
-             "Key=ModuleVersion,Value=${VERSION}" "Key=ModuleType,Value=${TYPE}" \
-             "Key=Repo,Value=tesco-ims-poc-demo" \
-      --region "${REGION}" \
-      ${EXTRA_CAPS}
-
-    echo "  |  Waiting for changeset to be ready..."
-    # Use a polling loop for the changeset status -- aws wait can be opaque on failure.
-    WAITED=0
-    while true; do
-      CS_STATUS=$(aws cloudformation describe-change-set \
-        --stack-name      "${NEW_STACK}" \
-        --change-set-name "${CHANGESET_NAME}" \
-        --region          "${REGION}" \
-        --query 'Status' --output text 2>/dev/null || echo "UNKNOWN")
-
-      case "${CS_STATUS}" in
-        CREATE_COMPLETE)
-          echo "  |  Changeset ready (CREATE_COMPLETE)"
-          break ;;
-        FAILED)
-          CS_REASON=$(aws cloudformation describe-change-set \
-            --stack-name      "${NEW_STACK}" \
-            --change-set-name "${CHANGESET_NAME}" \
-            --region          "${REGION}" \
-            --query 'StatusReason' --output text 2>/dev/null || echo "unknown")
-          echo ""
-          echo "  [FAIL] IMPORT changeset FAILED for '${NEW_STACK}'"
-          echo "     Reason: ${CS_REASON}"
-          echo "     Hints:"
-          echo "       - Verify the resource exists in AWS with the given identifier"
-          echo "       - Check DeletionPolicy: Retain is set in the EXISTING template"
-          echo "       - Some resource types do not support CFN import (e.g. AWS::EC2::Route)"
-          echo "         If so, remove that resource from import-config.json and let CFN create it"
-          echo ""
-          exit 1 ;;
-        CREATE_IN_PROGRESS)
-          echo "  |  [WAIT] Changeset creating... (${WAITED}s)"
-          sleep 10
-          WAITED=$((WAITED + 10))
-          if [ "${WAITED}" -ge 300 ]; then
-            echo "  [FAIL] Timed out waiting for changeset to be ready"
-            exit 1
-          fi ;;
-        *)
-          echo "  |  [WAIT] Changeset status: ${CS_STATUS} (${WAITED}s)"
-          sleep 10
-          WAITED=$((WAITED + 10)) ;;
-      esac
-    done
-
-    echo "  |  Executing import changeset..."
-    aws cloudformation execute-change-set \
-      --stack-name      "${NEW_STACK}" \
-      --change-set-name "${CHANGESET_NAME}" \
-      --region          "${REGION}"
-
-    echo "  |  Waiting for stack IMPORT_COMPLETE..."
-    WAITED=0
-    while true; do
-      STACK_STATUS=$(aws cloudformation describe-stacks \
-        --stack-name "${NEW_STACK}" --region "${REGION}" \
-        --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
-      case "${STACK_STATUS}" in
-        IMPORT_COMPLETE)
-          echo "  |  [OK] ${NEW_STACK} imported (IMPORT_COMPLETE)"
-          break ;;
-        IMPORT_ROLLBACK_COMPLETE|IMPORT_ROLLBACK_FAILED|ROLLBACK_COMPLETE|CREATE_FAILED)
-          echo "  [FAIL] Stack import failed: ${STACK_STATUS}"
-          echo "     Check CloudFormation console for '${NEW_STACK}' events."
-          exit 1 ;;
-        IMPORT_IN_PROGRESS|CREATE_IN_PROGRESS)
-          echo "  |  [WAIT] ${STACK_STATUS} (${WAITED}s)..."
-          sleep 15
-          WAITED=$((WAITED + 15))
-          if [ "${WAITED}" -ge 600 ]; then
-            echo "  [FAIL] Timed out waiting for import to complete"
-            exit 1
-          fi ;;
-        *)
-          echo "  |  [WAIT] ${STACK_STATUS} (${WAITED}s)..."
-          sleep 15
-          WAITED=$((WAITED + 15)) ;;
-      esac
-    done
+    if ! cfn_import_then_update \
+          "${NEW_STACK}" "${REGION}" "${TEMPLATE}" "${IMPORT_CONFIG}" \
+          "${RESOLVED}" "${IMPORT_FILE}" "new" \
+          "${ACCOUNT}" "${DOMAIN}" "${MODULE}" "${EXTRA_CAPS}" \
+          "${VERSION}" "${TYPE}"; then
+      echo "  [FAIL] Import migration failed for '${NEW_STACK}'."
+      echo "     Check CloudFormation console for '${NEW_STACK}' events."
+      exit 1
+    fi
 
     echo "     [OK] ${NEW_STACK} [ModuleVersion=${VERSION}]"
 

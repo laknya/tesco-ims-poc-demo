@@ -254,6 +254,10 @@ class TestCfnLint:
         KMS keys, or S3 buckets.  Also required by CloudFormation for any resource
         being imported via --change-set-type IMPORT.
         """
+        # AWS::EC2::Route is intentionally EXCLUDED: it is not a CFN-importable
+        # type, so it is created fresh in Phase 2 of the import flow and must NOT
+        # be retained (a retained route would block Phase 2 recreate). See
+        # generate_import_template.py and cfn_import_then_update.
         must_retain = {
             "networking/vpc-baseline": [
                 "AWS::EC2::VPC",
@@ -261,7 +265,6 @@ class TestCfnLint:
                 "AWS::EC2::InternetGateway",
                 "AWS::EC2::RouteTable",
                 "AWS::EC2::VPCGatewayAttachment",
-                "AWS::EC2::Route",
                 "AWS::EC2::SubnetRouteTableAssociation",
             ],
             "security/kms-key":        ["AWS::KMS::Key", "AWS::KMS::Alias"],
@@ -276,6 +279,93 @@ class TestCfnLint:
                 assert "DeletionPolicy: Retain" in content, \
                     (f"{template.relative_to(REPO_ROOT)}: missing DeletionPolicy: Retain. "
                      f"Add it to protect {rtype} from accidental stack deletion.")
+
+    @pytest.mark.parametrize("module_path", [
+        "networking/vpc-baseline",
+        "security/kms-key",
+        "shared-services/s3-bucket",
+    ])
+    def test_import_template_generator_produces_valid_filtered_template(self, module_path, tmp_path):
+        """
+        generate_import_template.py must produce a filtered template that:
+          - keeps exactly the resources listed in import-config.json
+          - drops every other (non-importable) resource
+          - passes cfn-lint (errors only; W2001 unused-param warnings are expected)
+        This guards against drift between the full template and what gets imported.
+        """
+        module_dir = MODULES_DIR / module_path
+        full_template = module_dir / "template.yaml"
+        import_config = module_dir / "import-config.json"
+        if not import_config.exists():
+            pytest.skip(f"{module_path} has no import-config.json")
+
+        out_template = tmp_path / "import.yaml"
+        result = run([
+            sys.executable,
+            str(REPO_ROOT / "new-structure" / "pipeline" / "generate_import_template.py"),
+            "--template", str(full_template),
+            "--config", str(import_config),
+            "--output", str(out_template),
+        ])
+        assert result.returncode == 0, \
+            f"generator failed for {module_path}: {result.stderr}"
+        assert out_template.exists(), "generator did not write the filtered template"
+
+        cfg = json.loads(import_config.read_text())
+        expected = {e["LogicalResourceId"] for e in cfg["resources_to_import"]}
+        # Parse just the resource keys without needing CFN tag handling:
+        produced = set()
+        in_resources = False
+        for line in out_template.read_text().splitlines():
+            if line.startswith("Resources:"):
+                in_resources = True
+                continue
+            if in_resources:
+                if line and not line[0].isspace():
+                    break  # left the Resources block
+                if line.startswith("  ") and not line.startswith("    ") and line.rstrip().endswith(":"):
+                    produced.add(line.strip().rstrip(":"))
+        assert produced == expected, \
+            (f"{module_path}: filtered template resources {produced} "
+             f"!= import-config resources {expected}")
+
+        # cfn-lint: tolerate warnings (exit 4), fail only on errors (exit 2 / contains 'E')
+        lint = cfn_lint(str(out_template))
+        error_lines = [ln for ln in lint.stdout.splitlines() if ln.strip().startswith("E")]
+        assert not error_lines, \
+            f"{module_path}: filtered template has cfn-lint errors:\n{lint.stdout}"
+
+    def test_route_is_option_a_retained_in_existing_unmanaged_in_new(self):
+        """
+        Option A (zero-disruption) handling of AWS::EC2::Route:
+          - EXISTING template: the route is RETAINED (DeletionPolicy: Retain) so it
+            is never deleted during migration -- no traffic gap.
+          - NEW template: the route is OMITTED entirely (adopted but unmanaged), so
+            Phase 2 never tries to delete/recreate it.
+        """
+        existing = EXISTING_DIR / "dev" / "networking__vpc-baseline-template.yaml"
+        new = MODULES_DIR / "networking" / "vpc-baseline" / "template.yaml"
+
+        def _is_route_line(line):
+            # Exact match for AWS::EC2::Route -- must NOT match AWS::EC2::RouteTable.
+            return line.strip() == "Type: AWS::EC2::Route"
+
+        # EXISTING: the route block must carry DeletionPolicy: Retain.
+        ex_lines = existing.read_text().splitlines()
+        found_route = False
+        for i, line in enumerate(ex_lines):
+            if _is_route_line(line):
+                found_route = True
+                block = "\n".join(ex_lines[i:i + 4])
+                assert "DeletionPolicy: Retain" in block, \
+                    (f"{existing.relative_to(REPO_ROOT)}: AWS::EC2::Route must be RETAINED "
+                     f"(Option A) so it survives the EXISTING stack deletion without a gap.")
+        assert found_route, "EXISTING VPC template should still define PublicRoute"
+
+        # NEW: no AWS::EC2::Route resource at all (the route table is still allowed).
+        assert not any(_is_route_line(line) for line in new.read_text().splitlines()), \
+            (f"{new.relative_to(REPO_ROOT)}: NEW template must NOT manage AWS::EC2::Route "
+             f"(Option A: adopted-but-unmanaged to avoid any traffic disruption).")
 
 
 # -- JSON config syntax --------------------------------------------------------

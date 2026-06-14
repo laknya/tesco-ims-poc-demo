@@ -189,6 +189,205 @@ cfn_delete_stack_robust() {
   done
 }
 
+# cfn_import_then_update STACK REGION FULL_TEMPLATE IMPORT_CONFIG PARAMS \
+#                        RESOURCES_JSON STAGE_TAG ACCOUNT DOMAIN MODULE [EXTRA_CAPS]
+#   Two-phase CFN Resource Import:
+#     Phase 1 (IMPORT): create+execute an IMPORT change set using a FILTERED
+#       template that contains only importable resources. Non-importable types
+#       (AWS::EC2::Route, AWS::S3::BucketPolicy) are stripped by
+#       generate_import_template.py. Without this, CFN rejects the import with
+#       "Resources [X] is missing from ResourceToImport list".
+#     Phase 1.5 (CLEANUP): delete any physical resource that would collide when
+#       Phase 2 recreates it (e.g. an existing 0.0.0.0/0 route).
+#     Phase 2 (UPDATE): deploy the FULL template so CFN creates the stripped
+#       resources fresh.
+#
+#   RESOURCES_JSON : path to the resolved --resources-to-import array (file)
+#   STAGE_TAG      : value for the POCStage tag (e.g. existing | new | rollback)
+#   Returns 0 on success, non-zero on any failure.
+cfn_import_then_update() {
+  local stack="$1" region="$2" full_template="$3" import_config="$4"
+  local params="$5" resources_json="$6" stage_tag="$7"
+  local account="$8" domain="$9" module="${10}" extra_caps="${11:-}"
+  local version="${12:-}" mtype="${13:-}"
+  local prefix="  "
+
+  # Optional ModuleVersion / ModuleType tags (used by NEW stacks in stage2).
+  local cs_version_tags="" dep_version_tags=""
+  if [ -n "${version}" ]; then
+    cs_version_tags="Key=ModuleVersion,Value=${version}"
+    dep_version_tags="ModuleVersion=${version}"
+  fi
+  if [ -n "${mtype}" ]; then
+    cs_version_tags="${cs_version_tags} Key=ModuleType,Value=${mtype}"
+    dep_version_tags="${dep_version_tags} ModuleType=${mtype}"
+  fi
+
+  local import_template actions_file
+  import_template=$(mktemp /tmp/tesco-ims-import-tmpl-XXXXXX.yaml)
+  actions_file=$(mktemp /tmp/tesco-ims-import-actions-XXXXXX.json)
+
+  echo "${prefix}Phase 1: generating filtered import template..."
+  if ! python3 new-structure/pipeline/generate_import_template.py \
+        --template "${full_template}" \
+        --config   "${import_config}" \
+        --output   "${import_template}" \
+        --actions-output "${actions_file}"; then
+    echo "${prefix}[FAIL] Could not generate filtered import template."
+    rm -f "${import_template}" "${actions_file}"
+    return 1
+  fi
+
+  local resources_to_import changeset_name
+  resources_to_import=$(cat "${resources_json}")
+  changeset_name="import-$(date +%s)"
+
+  echo "${prefix}Phase 1: creating IMPORT change set '${changeset_name}'..."
+  # shellcheck disable=SC2086
+  if ! aws cloudformation create-change-set \
+        --stack-name          "${stack}" \
+        --change-set-name     "${changeset_name}" \
+        --change-set-type     IMPORT \
+        --resources-to-import "${resources_to_import}" \
+        --template-body       "file://${import_template}" \
+        --parameters          "file://${params}" \
+        --tags "Key=POCStage,Value=${stage_tag}" "Key=Account,Value=${account}" \
+               "Key=Domain,Value=${domain}" "Key=Module,Value=${module}" \
+               "Key=Repo,Value=tesco-ims-poc-demo" ${cs_version_tags} \
+        --region "${region}" \
+        ${extra_caps}; then
+    echo "${prefix}[FAIL] create-change-set (IMPORT) call failed."
+    rm -f "${import_template}" "${actions_file}"
+    return 1
+  fi
+
+  if ! _cfn_wait_changeset "${stack}" "${changeset_name}" "${region}" "${prefix}"; then
+    rm -f "${import_template}" "${actions_file}"
+    return 1
+  fi
+
+  echo "${prefix}Phase 1: executing IMPORT change set..."
+  aws cloudformation execute-change-set \
+    --stack-name "${stack}" --change-set-name "${changeset_name}" --region "${region}"
+
+  if ! _cfn_wait_status "${stack}" "${region}" "IMPORT_COMPLETE" "${prefix}"; then
+    rm -f "${import_template}" "${actions_file}"
+    return 1
+  fi
+  echo "${prefix}[OK] Phase 1 complete -- resources imported."
+
+  # Phase 1.5: delete physical resources that would collide in Phase 2.
+  _cfn_cleanup_conflicts "${actions_file}" "${resources_json}" "${region}" "${prefix}"
+
+  # Phase 2: deploy the FULL template to create the stripped resources fresh.
+  echo "${prefix}Phase 2: deploying full template (adds non-importable resources)..."
+  # shellcheck disable=SC2086
+  if ! aws cloudformation deploy \
+        --stack-name          "${stack}" \
+        --template-file       "${full_template}" \
+        --parameter-overrides "file://${params}" \
+        --tags POCStage="${stage_tag}" Account="${account}" \
+               Domain="${domain}" Module="${module}" Repo=tesco-ims-poc-demo ${dep_version_tags} \
+        --region "${region}" \
+        --no-fail-on-empty-changeset \
+        ${extra_caps}; then
+    echo "${prefix}[FAIL] Phase 2 deploy failed for '${stack}'."
+    rm -f "${import_template}" "${actions_file}"
+    return 1
+  fi
+
+  echo "${prefix}[OK] Phase 2 complete -- '${stack}' fully reconciled to template."
+  rm -f "${import_template}" "${actions_file}"
+  return 0
+}
+
+# Internal: wait for a change set to reach CREATE_COMPLETE. Returns non-zero on FAILED.
+_cfn_wait_changeset() {
+  local stack="$1" cs="$2" region="$3" prefix="${4:-  }"
+  local waited=0 status reason
+  while true; do
+    status=$(aws cloudformation describe-change-set \
+      --stack-name "${stack}" --change-set-name "${cs}" --region "${region}" \
+      --query 'Status' --output text 2>/dev/null || echo "UNKNOWN")
+    case "${status}" in
+      CREATE_COMPLETE) echo "${prefix}  change set ready"; return 0 ;;
+      FAILED)
+        reason=$(aws cloudformation describe-change-set \
+          --stack-name "${stack}" --change-set-name "${cs}" --region "${region}" \
+          --query 'StatusReason' --output text 2>/dev/null || echo "unknown")
+        echo "${prefix}  [FAIL] change set FAILED: ${reason}"
+        aws cloudformation delete-change-set \
+          --stack-name "${stack}" --change-set-name "${cs}" --region "${region}" 2>/dev/null || true
+        return 1 ;;
+      *) sleep 10; waited=$((waited + 10)) ;;
+    esac
+    if [ "${waited}" -ge 300 ]; then
+      echo "${prefix}  [FAIL] Timed out waiting for change set"
+      return 1
+    fi
+  done
+}
+
+# Internal: wait for a stack to reach TARGET status. Returns non-zero on a failure state.
+_cfn_wait_status() {
+  local stack="$1" region="$2" target="$3" prefix="${4:-  }"
+  local waited=0 status
+  while true; do
+    status=$(aws cloudformation describe-stacks \
+      --stack-name "${stack}" --region "${region}" \
+      --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+    case "${status}" in
+      "${target}") return 0 ;;
+      *ROLLBACK_COMPLETE|*ROLLBACK_FAILED|CREATE_FAILED|UPDATE_FAILED|IMPORT_ROLLBACK_COMPLETE|IMPORT_ROLLBACK_FAILED)
+        echo "${prefix}  [FAIL] stack '${stack}' reached ${status} (wanted ${target})"
+        return 1 ;;
+      *) sleep 15; waited=$((waited + 15)) ;;
+    esac
+    if [ "${waited}" -ge 600 ]; then
+      echo "${prefix}  [FAIL] Timed out waiting for '${stack}' -> ${target}"
+      return 1
+    fi
+  done
+}
+
+# Internal: delete physical resources that would collide when Phase 2 recreates them.
+#   Currently handles AWS::EC2::Route (an existing 0.0.0.0/0 route blocks recreate).
+#   actions_file   : sidecar from generate_import_template.py (dropped resources)
+#   resources_json : resolved --resources-to-import array (for route table physical IDs)
+_cfn_cleanup_conflicts() {
+  local actions_file="$1" resources_json="$2" region="$3" prefix="${4:-  }"
+  [ -s "${actions_file}" ] || return 0
+
+  # Emit "ROUTE <route_table_physical_id> <cidr>" lines for each dropped route.
+  python3 - "${actions_file}" "${resources_json}" <<'PYEOF' | while read -r kind rt_id cidr; do
+import json, sys
+actions = json.load(open(sys.argv[1]))
+resolved = json.load(open(sys.argv[2]))
+# Map RouteTable logical id -> physical id from the resolved import array.
+rt_phys = {}
+for r in resolved:
+    if r.get("ResourceType") == "AWS::EC2::RouteTable":
+        rid = r.get("ResourceIdentifier", {}).get("RouteTableId")
+        if rid:
+            rt_phys[r["LogicalResourceId"]] = rid
+for a in actions:
+    if a.get("ResourceType") == "AWS::EC2::Route":
+        phys = rt_phys.get(a.get("RouteTableLogicalId"))
+        cidr = a.get("DestinationCidrBlock", "0.0.0.0/0")
+        if phys:
+            print(f"ROUTE {phys} {cidr}")
+PYEOF
+    if [ "${kind}" = "ROUTE" ] && [ -n "${rt_id}" ]; then
+      echo "${prefix}Phase 1.5: removing pre-existing route ${cidr} on ${rt_id} (avoids recreate conflict)..."
+      aws ec2 delete-route --route-table-id "${rt_id}" \
+        --destination-cidr-block "${cidr}" --region "${region}" 2>/dev/null \
+        && echo "${prefix}  [OK] stale route removed" \
+        || echo "${prefix}  (no conflicting route present -- nothing to remove)"
+    fi
+  done
+  return 0
+}
+
 # Internal helper: retry delete-stack --retain-resources on a DELETE_FAILED stack.
 _cfn_retain_retry() {
   local stack="$1"
