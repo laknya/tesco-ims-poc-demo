@@ -136,7 +136,13 @@ REVIEW_IN_PROGRESS)
         echo ""
         continue
       else
-        echo "  [WARN] ${domain_module}: import failed -- falling back to normal deploy"
+        # Retained resources exist but import failed. A fresh deploy CANNOT
+        # succeed here -- the resources already exist (EarlyValidation would
+        # reject it) and would mask the real import error. Fail fast instead.
+        echo "  [FAIL] ${domain_module}: import of retained resources failed."
+        echo "  A fresh deploy cannot proceed -- the resources already exist in AWS."
+        echo "  See the Phase 1/Phase 2 error above for the root cause."
+        exit 1
       fi
     else
       echo "  ${domain_module}: no retained resources found -- proceeding with fresh deploy"
