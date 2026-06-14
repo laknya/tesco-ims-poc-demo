@@ -21,7 +21,7 @@
       "LogicalResourceId": "GatewayAttachment",
       "Identifiers": [
         {"Key": "VpcId", "Source": "stack-resource", "StackLogicalId": "VPC"},
-        {"Key": "InternetGatewayId", "Source": "stack-resource", "StackLogicalId": "InternetGateway"}
+        {"Key": "AttachmentType", "Source": "literal", "Value": "internet-gateway"}
       ]
     },
     {
@@ -63,14 +63,14 @@
       "ResourceType": "AWS::EC2::SubnetRouteTableAssociation",
       "LogicalResourceId": "PublicSubnetAAssoc",
       "Identifiers": [
-        {"Key": "SubnetRouteTableAssociationId", "Source": "stack-resource", "StackLogicalId": "PublicSubnetAAssoc"}
+        {"Key": "Id", "Source": "stack-resource", "StackLogicalId": "PublicSubnetAAssoc"}
       ]
     },
     {
       "ResourceType": "AWS::EC2::SubnetRouteTableAssociation",
       "LogicalResourceId": "PublicSubnetBAssoc",
       "Identifiers": [
-        {"Key": "SubnetRouteTableAssociationId", "Source": "stack-resource", "StackLogicalId": "PublicSubnetBAssoc"}
+        {"Key": "Id", "Source": "stack-resource", "StackLogicalId": "PublicSubnetBAssoc"}
       ]
     }
   ]

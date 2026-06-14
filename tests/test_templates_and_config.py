@@ -223,12 +223,6 @@ class TestCfnLint:
             f"VPC import-config.json is missing resources: {missing}"
         assert "PublicRoute" not in logical_ids, \
             "PublicRoute (AWS::EC2::Route) must NOT be in import-config -- CFN cannot import this resource type"
-        # Verify correct identifier key for SubnetRouteTableAssociation
-        for entry in cfg["resources_to_import"]:
-            if entry["ResourceType"] == "AWS::EC2::SubnetRouteTableAssociation":
-                keys = {id_spec["Key"] for id_spec in entry["Identifiers"]}
-                assert "SubnetRouteTableAssociationId" in keys, \
-                    f"{entry['LogicalResourceId']}: must use 'SubnetRouteTableAssociationId' not 'Id'"
 
     def test_kms_module_has_import_config(self):
         """
@@ -563,3 +557,70 @@ class TestStackNamingConvention:
                     f"the {{domain}}__{{module}}-template.yaml naming convention. "
                     f"Rename it so discover_existing_modules() can derive domain/module from the filename."
                 )
+
+
+# -- Import identifier keys vs authoritative resource schemas ------------------
+
+def _load_cfn_primary_identifiers():
+    """
+    Build {typeName: set(primaryIdentifier keys)} from cfn-lint's bundled provider
+    schemas. CloudFormation Resource Import requires the ResourceIdentifier keys to
+    match a resource type's primaryIdentifier exactly -- this is the source of truth
+    that catches wrong identifier keys (e.g. VPCGatewayAttachment, SubnetRouteTableAssociation).
+    Returns {} if the schemas cannot be located (test then skips).
+    """
+    import glob
+    try:
+        import cfnlint
+    except ImportError:
+        return {}
+    base = Path(cfnlint.__file__).parent / "data" / "schemas"
+    if not base.is_dir():
+        return {}
+    result = {}
+    for f in glob.glob(str(base / "**" / "*.json"), recursive=True):
+        try:
+            s = json.loads(Path(f).read_text())
+        except Exception:
+            continue
+        if not isinstance(s, dict):
+            continue
+        tn = s.get("typeName")
+        prim = s.get("primaryIdentifier")
+        if tn and prim and tn not in result:
+            result[tn] = {p.split("/")[-1] for p in prim}
+    return result
+
+
+class TestImportIdentifierKeys:
+    """
+    Every import-config.json identifier set must match the resource type's
+    primaryIdentifier from the authoritative CloudFormation resource schema.
+    This is what guarantees the IMPORT change set is accepted by CFN.
+    """
+
+    SCHEMAS = _load_cfn_primary_identifiers()
+
+    def test_all_import_configs_match_primary_identifier(self):
+        if not self.SCHEMAS:
+            pytest.skip("cfn-lint provider schemas not locatable in this environment")
+
+        import_configs = sorted(MODULES_DIR.rglob("import-config.json"))
+        assert import_configs, "no import-config.json files found"
+
+        problems = []
+        for cfg_path in import_configs:
+            cfg = json.loads(cfg_path.read_text())
+            for entry in cfg.get("resources_to_import", []):
+                rtype = entry["ResourceType"]
+                expected = self.SCHEMAS.get(rtype)
+                if expected is None:
+                    continue  # unknown type to the bundled schema -- skip
+                actual = {i["Key"] for i in entry["Identifiers"]}
+                if actual != expected:
+                    problems.append(
+                        f"{cfg_path.relative_to(REPO_ROOT)} :: {entry['LogicalResourceId']} "
+                        f"({rtype}) has identifier keys {sorted(actual)} but CFN expects "
+                        f"{sorted(expected)}"
+                    )
+        assert not problems, "Import identifier mismatch(es):\n" + "\n".join(problems)
