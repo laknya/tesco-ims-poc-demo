@@ -212,14 +212,14 @@ cfn_import_then_update() {
   local version="${12:-}" mtype="${13:-}"
   local prefix="  "
 
-  # Optional ModuleVersion / ModuleType tags (used by NEW stacks in stage2).
-  local cs_version_tags="" dep_version_tags=""
+  # Optional ModuleVersion / ModuleType tags applied in Phase 2 (deploy).
+  # NOTE: stack tags are NOT set in Phase 1 -- a CFN IMPORT change set rejects
+  # them ("you cannot modify or add [Tags]"). All tags are applied in Phase 2.
+  local dep_version_tags=""
   if [ -n "${version}" ]; then
-    cs_version_tags="Key=ModuleVersion,Value=${version}"
     dep_version_tags="ModuleVersion=${version}"
   fi
   if [ -n "${mtype}" ]; then
-    cs_version_tags="${cs_version_tags} Key=ModuleType,Value=${mtype}"
     dep_version_tags="${dep_version_tags} ModuleType=${mtype}"
   fi
 
@@ -243,6 +243,8 @@ cfn_import_then_update() {
   changeset_name="import-$(date +%s)"
 
   echo "${prefix}Phase 1: creating IMPORT change set '${changeset_name}'..."
+  # No --tags here: CFN rejects stack tags during an import operation. Tags are
+  # applied in Phase 2 (deploy) instead.
   # shellcheck disable=SC2086
   if ! aws cloudformation create-change-set \
         --stack-name          "${stack}" \
@@ -251,9 +253,6 @@ cfn_import_then_update() {
         --resources-to-import "${resources_to_import}" \
         --template-body       "file://${import_template}" \
         --parameters          "file://${params}" \
-        --tags "Key=POCStage,Value=${stage_tag}" "Key=Account,Value=${account}" \
-               "Key=Domain,Value=${domain}" "Key=Module,Value=${module}" \
-               "Key=Repo,Value=tesco-ims-poc-demo" ${cs_version_tags} \
         --region "${region}" \
         ${extra_caps}; then
     echo "${prefix}[FAIL] create-change-set (IMPORT) call failed."
