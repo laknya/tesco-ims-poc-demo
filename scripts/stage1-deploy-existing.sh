@@ -93,13 +93,19 @@ while IFS= read -r domain_module; do
     IMPORT_FILE="/tmp/tesco-ims-stage1-${ACCOUNT}-${DOMAIN}-${MODULE}.json"
     echo "  ${domain_module}: EXISTING stack absent -- checking for retained resources via tags..."
 
+    RESOLVE_STDERR=$(mktemp)
     python3 new-structure/pipeline/resolve_import.py \
       --stack-name "${STACK}" \
       --config     "${IMPORT_CONFIG}" \
       --params     "${PARAMS}" \
       --region     "${REGION}" \
       --output     "${IMPORT_FILE}" \
-      --fallback-by-tag 2>/dev/null && RESOLVE_OK=true || RESOLVE_OK=false
+      --fallback-by-tag 2>"${RESOLVE_STDERR}" && RESOLVE_OK=true || RESOLVE_OK=false
+    if [ "${RESOLVE_OK}" = "false" ] && [ -s "${RESOLVE_STDERR}" ]; then
+      echo "  [DEBUG] resolve_import errors:"
+      cat "${RESOLVE_STDERR}"
+    fi
+    rm -f "${RESOLVE_STDERR}"
 
     if [ "${RESOLVE_OK}" = "true" ] && [ -f "${IMPORT_FILE}" ]; then
       echo "  ${domain_module}: retained resources found -- importing into EXISTING stack..."

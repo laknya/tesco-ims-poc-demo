@@ -111,39 +111,62 @@ def _lookup_ec2_by_tag(resource_type, stack_name, logical_id, ec2):
 
 def _lookup_kms_by_tag(resource_type, stack_name, logical_id, kms, params, stack_cache):
     if resource_type == "AWS::KMS::Key":
-        # aws:cloudformation:* are system tags -- AWS does NOT return them via
-        # list_resource_tags. Use user-defined tags set by the CFN template instead.
         env = params.get("Environment", "")
         expected_name = f"tesco-ims-{env}-platform-key" if env else None
-        if not expected_name:
-            print(f"    [WARN] Cannot derive KMS key name without Environment param",
-                  file=sys.stderr)
-            return None
-        try:
-            paginator = kms.get_paginator("list_keys")
-            for page in paginator.paginate():
-                for key in page["Keys"]:
-                    try:
-                        tags_r = kms.list_resource_tags(KeyId=key["KeyId"])
-                        tags = {t["TagKey"]: t["TagValue"] for t in tags_r.get("Tags", [])}
-                        if tags.get("Name") == expected_name:
-                            return key["KeyId"]
-                    except ClientError:
-                        pass
-        except ClientError as exc:
-            print(f"    [WARN] KMS tag lookup failed: {exc}", file=sys.stderr)
+
+        # Primary: user-defined Name tag (aws:cloudformation:* system tags are NOT
+        # returned by list_resource_tags -- AWS hides them from the tag API).
+        if expected_name:
+            try:
+                paginator = kms.get_paginator("list_keys")
+                for page in paginator.paginate():
+                    for key in page["Keys"]:
+                        try:
+                            tags_r = kms.list_resource_tags(KeyId=key["KeyId"])
+                            tags = {t["TagKey"]: t["TagValue"] for t in tags_r.get("Tags", [])}
+                            if tags.get("Name") == expected_name:
+                                print(f"    {logical_id}: found via Name tag '{expected_name}'")
+                                return key["KeyId"]
+                        except ClientError:
+                            pass
+            except ClientError as exc:
+                print(f"    [WARN] KMS tag scan failed: {exc}", file=sys.stderr)
+
+        # Secondary: describe via alias name (alias/tesco-ims-{env}-platform).
+        # More reliable than tags because alias name is always derivable from params.
+        alias_name = params.get("KeyAliasName")
+        if not alias_name and env:
+            alias_name = f"alias/tesco-ims-{env}-platform"
+        if alias_name:
+            try:
+                r = kms.describe_key(KeyId=alias_name)
+                key_id = r["KeyMetadata"]["KeyId"]
+                key_state = r["KeyMetadata"]["KeyState"]
+                print(f"    {logical_id}: found via alias '{alias_name}' (state: {key_state})")
+                if key_state in ("PendingDeletion", "PendingReplicaDeletion"):
+                    # Key was retained but scheduled for deletion -- cancel so it can be imported.
+                    kms.cancel_key_deletion(KeyId=key_id)
+                    kms.enable_key(KeyId=key_id)
+                    print(f"    {logical_id}: key re-enabled (was {key_state})")
+                return key_id
+            except ClientError as exc:
+                code = exc.response["Error"]["Code"]
+                if code not in ("NotFoundException", "InvalidAliasNameException"):
+                    print(f"    [WARN] KMS alias describe failed: {exc}", file=sys.stderr)
+
+        return None
 
     elif resource_type == "AWS::KMS::Alias":
-        # KMS aliases are not taggable. Derive the expected alias name from params:
-        #   NEW params file: KeyAliasName is explicit
-        #   EXISTING params file: derive from Environment -> alias/tesco-ims-{env}-platform
+        # KMS aliases are not taggable. Derive alias name from params:
+        #   NEW params: KeyAliasName is explicit
+        #   EXISTING params: derive from Environment -> alias/tesco-ims-{env}-platform
         alias_name = params.get("KeyAliasName")
         if not alias_name:
             env = params.get("Environment", "")
             if env:
                 alias_name = f"alias/tesco-ims-{env}-platform"
         if not alias_name:
-            # Last resort: if KMSKey was already resolved, list its aliases
+            # Last resort: list aliases on the already-resolved KMSKey
             key_id = stack_cache.get("KMSKey")
             if key_id:
                 try:
@@ -154,14 +177,17 @@ def _lookup_kms_by_tag(resource_type, stack_name, logical_id, kms, params, stack
                 except ClientError as exc:
                     print(f"    [WARN] KMS alias-by-key lookup failed: {exc}", file=sys.stderr)
             return None
+
+        # Verify the alias actually exists before returning its name.
         try:
-            paginator = kms.get_paginator("list_aliases")
-            for page in paginator.paginate():
-                for alias in page["Aliases"]:
-                    if alias.get("AliasName") == alias_name:
-                        return alias_name
+            kms.describe_key(KeyId=alias_name)
+            print(f"    {logical_id}: alias '{alias_name}' exists")
+            return alias_name
         except ClientError as exc:
-            print(f"    [WARN] KMS alias lookup failed: {exc}", file=sys.stderr)
+            code = exc.response["Error"]["Code"]
+            if code not in ("NotFoundException", "InvalidAliasNameException"):
+                print(f"    [WARN] KMS alias verify failed: {exc}", file=sys.stderr)
+
     return None
 
 
