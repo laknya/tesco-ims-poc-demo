@@ -1,6 +1,6 @@
 {
   "migration_type": "import",
-  "description": "VPC baseline: all 11 EC2 resources are imported from the EXISTING stack. Physical IDs are resolved via describe-stack-resource before the EXISTING stack is deleted.",
+  "description": "VPC baseline: 10 EC2 resources imported from the EXISTING stack. AWS::EC2::Route is NOT CFN-importable -- it is created fresh by the NEW stack after the route table is imported. Physical IDs are resolved via describe-stack-resource before the EXISTING stack is deleted.",
   "resources_to_import": [
     {
       "ResourceType": "AWS::EC2::VPC",
@@ -60,25 +60,17 @@
       ]
     },
     {
-      "ResourceType": "AWS::EC2::Route",
-      "LogicalResourceId": "PublicRoute",
-      "Identifiers": [
-        {"Key": "RouteTableId", "Source": "stack-resource", "StackLogicalId": "PublicRouteTable"},
-        {"Key": "DestinationCidrBlock", "Source": "literal", "Value": "0.0.0.0/0"}
-      ]
-    },
-    {
       "ResourceType": "AWS::EC2::SubnetRouteTableAssociation",
       "LogicalResourceId": "PublicSubnetAAssoc",
       "Identifiers": [
-        {"Key": "Id", "Source": "stack-resource", "StackLogicalId": "PublicSubnetAAssoc"}
+        {"Key": "SubnetRouteTableAssociationId", "Source": "stack-resource", "StackLogicalId": "PublicSubnetAAssoc"}
       ]
     },
     {
       "ResourceType": "AWS::EC2::SubnetRouteTableAssociation",
       "LogicalResourceId": "PublicSubnetBAssoc",
       "Identifiers": [
-        {"Key": "Id", "Source": "stack-resource", "StackLogicalId": "PublicSubnetBAssoc"}
+        {"Key": "SubnetRouteTableAssociationId", "Source": "stack-resource", "StackLogicalId": "PublicSubnetBAssoc"}
       ]
     }
   ]

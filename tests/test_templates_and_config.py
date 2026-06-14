@@ -201,9 +201,10 @@ class TestCfnLint:
 
     def test_vpc_module_has_import_config(self):
         """
-        VPC baseline module must have import-config.json covering all 11 EC2 resources.
-        The CFN Import approach moves VPC ownership from EXISTING to NEW stack without
-        recreating any resources.
+        VPC baseline module must have import-config.json covering the 10 importable EC2
+        resources. AWS::EC2::Route is intentionally excluded -- CFN Resource Import does
+        not support that resource type; the route is created fresh by the NEW stack after
+        the route table is imported.
         """
         import_cfg = MODULES_DIR / "networking" / "vpc-baseline" / "import-config.json"
         assert import_cfg.exists(), \
@@ -214,12 +215,20 @@ class TestCfnLint:
         expected = {
             "VPC", "InternetGateway", "GatewayAttachment",
             "PublicSubnetA", "PublicSubnetB", "PrivateSubnetA", "PrivateSubnetB",
-            "PublicRouteTable", "PublicRoute",
+            "PublicRouteTable",
             "PublicSubnetAAssoc", "PublicSubnetBAssoc",
         }
         missing = expected - logical_ids
         assert not missing, \
             f"VPC import-config.json is missing resources: {missing}"
+        assert "PublicRoute" not in logical_ids, \
+            "PublicRoute (AWS::EC2::Route) must NOT be in import-config -- CFN cannot import this resource type"
+        # Verify correct identifier key for SubnetRouteTableAssociation
+        for entry in cfg["resources_to_import"]:
+            if entry["ResourceType"] == "AWS::EC2::SubnetRouteTableAssociation":
+                keys = {id_spec["Key"] for id_spec in entry["Identifiers"]}
+                assert "SubnetRouteTableAssociationId" in keys, \
+                    f"{entry['LogicalResourceId']}: must use 'SubnetRouteTableAssociationId' not 'Id'"
 
     def test_kms_module_has_import_config(self):
         """

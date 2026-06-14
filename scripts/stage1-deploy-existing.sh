@@ -52,18 +52,57 @@ while IFS= read -r domain_module; do
     --stack-name "${STACK}" --region "${REGION}" \
     --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
 
-  # Stuck stacks: DELETE_FAILED, ROLLBACK_COMPLETE, CREATE_FAILED.
-  # All three block further deploys but resources may still exist in AWS
-  # (DeletionPolicy: Retain on rollback; --retain-resources on DELETE_FAILED).
-  # Delete the stuck stack so the import-check path below can re-adopt the resources.
-  if [ "${STACK_STATUS}" = "DELETE_FAILED" ] \
-  || [ "${STACK_STATUS}" = "ROLLBACK_COMPLETE" ] \
-  || [ "${STACK_STATUS}" = "CREATE_FAILED" ]; then
-    echo "  [WARN] '${STACK}' is in ${STACK_STATUS} -- clearing stuck stack."
-    echo "  AWS resources are retained (DeletionPolicy: Retain). Will re-import below."
-    cfn_delete_stack_robust "${STACK}" "${REGION}" "  "
-    STACK_STATUS="DOES_NOT_EXIST"
-    echo "  [OK] Stuck stack cleared."
+  echo "    status   : ${STACK_STATUS}"
+
+  # Terminal stuck states that block further create/update:
+  #   CREATE_FAILED / ROLLBACK_COMPLETE / ROLLBACK_FAILED  -- initial create failed
+  #   DELETE_FAILED                                         -- delete stuck (retained)
+  #   UPDATE_ROLLBACK_FAILED                                -- update rollback stuck
+  #   IMPORT_ROLLBACK_COMPLETE / IMPORT_ROLLBACK_FAILED     -- import rolled back
+  #   REVIEW_IN_PROGRESS                                    -- changeset created, never executed
+  # Resources survive via DeletionPolicy: Retain or --retain-resources.
+  # Delete the stuck stack so the import path below can re-adopt the resources.
+  case "${STACK_STATUS}" in
+    DELETE_FAILED|CREATE_FAILED|ROLLBACK_COMPLETE|ROLLBACK_FAILED|\
+UPDATE_ROLLBACK_FAILED|IMPORT_ROLLBACK_COMPLETE|IMPORT_ROLLBACK_FAILED|\
+REVIEW_IN_PROGRESS)
+      echo "  [WARN] '${STACK}' is in ${STACK_STATUS} -- clearing stuck stack."
+      echo "  AWS resources retained (DeletionPolicy: Retain). Will re-import below."
+      cfn_delete_stack_robust "${STACK}" "${REGION}" "  "
+      STACK_STATUS="DOES_NOT_EXIST"
+      echo "  [OK] Stuck stack cleared."
+      ;;
+  esac
+
+  # For modules with import-config.json that appear healthy (CREATE_COMPLETE etc.),
+  # verify the stack actually owns its key resource. If the first resource in
+  # import-config is NOT owned by the stack (e.g. was retained by a prior run and
+  # never re-imported), delete and re-import rather than letting the deploy fail
+  # with EarlyValidation.
+  if [ -f "${IMPORT_CONFIG}" ] && [ "${STACK_STATUS}" != "DOES_NOT_EXIST" ]; then
+    FIRST_LOGICAL_ID=$(python3 -c "
+import json, sys
+try:
+    cfg = json.load(open('${IMPORT_CONFIG}'))
+    rs = cfg.get('resources_to_import', [])
+    print(rs[0]['LogicalResourceId'] if rs else '')
+except Exception:
+    pass
+" 2>/dev/null)
+    if [ -n "${FIRST_LOGICAL_ID}" ]; then
+      RES_STATUS=$(aws cloudformation describe-stack-resource \
+        --stack-name "${STACK}" --region "${REGION}" \
+        --logical-resource-id "${FIRST_LOGICAL_ID}" \
+        --query 'StackResourceDetail.ResourceStatus' --output text 2>/dev/null \
+        || echo "NOT_FOUND")
+      if [ "${RES_STATUS}" = "NOT_FOUND" ]; then
+        echo "  [WARN] '${STACK}' (${STACK_STATUS}) does not own '${FIRST_LOGICAL_ID}'."
+        echo "  Resource exists in AWS but not in this stack. Clearing to re-import."
+        cfn_delete_stack_robust "${STACK}" "${REGION}" "  "
+        STACK_STATUS="DOES_NOT_EXIST"
+        echo "  [OK] Stack cleared -- import path will re-adopt resource."
+      fi
+    fi
   fi
 
   # Detect whether this template creates IAM resources (requires capabilities).
