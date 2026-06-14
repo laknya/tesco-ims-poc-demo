@@ -142,7 +142,7 @@ class TestAllAccountModuleCombinations:
     @pytest.mark.parametrize("account,domain,module,min_params", [
         ("dev", "networking",     "vpc-baseline", 10),
         ("dev", "security",       "kms-key",      10),  # 9 base + KeyAliasName
-        ("dev", "shared-services","s3-bucket",    12),  # removed KmsKeyArn, added KmsStackName
+        ("dev", "shared-services","s3-bucket",    10),  # removed KmsKeyArn+stale params, added KmsStackName
     ])
     def test_param_count_meets_minimum(self, account, domain, module, min_params):
         """All modules should resolve the expected minimum number of params."""

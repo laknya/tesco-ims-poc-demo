@@ -1,8 +1,6 @@
 {
   "EnableVersioning":       "Enabled",
   "LifecycleRetentionDays": "90",
-  "EnableKmsEncryption":    "true",
-  "EnableAccessLogging":    "false",
   "CostCentre":             "TESCO-IMS-PLATFORM",
   "ManagedBy":              "github-actions"
 }
