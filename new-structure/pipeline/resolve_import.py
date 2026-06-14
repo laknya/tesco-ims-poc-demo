@@ -327,8 +327,19 @@ def validate_resource(resource_type, identifier, region):
     try:
         if resource_type == "AWS::S3::Bucket":
             s3 = boto3.client("s3", region_name=region)
-            s3.head_bucket(Bucket=identifier.get("BucketName", ""))
-            return True
+            try:
+                s3.head_bucket(Bucket=identifier.get("BucketName", ""))
+                return True
+            except ClientError as exc:
+                code = exc.response["Error"]["Code"]
+                # 404/NoSuchBucket -> bucket gone -> create fresh.
+                if code in ("404", "NoSuchBucket"):
+                    return False
+                # 403/Forbidden -> bucket EXISTS but we lack head access
+                # (or it is owned elsewhere). For import purposes it exists.
+                if code in ("403", "Forbidden", "AccessDenied"):
+                    return True
+                raise
 
         elif resource_type == "AWS::KMS::Key":
             kms = boto3.client("kms", region_name=region)
