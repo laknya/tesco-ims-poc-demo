@@ -158,81 +158,17 @@ except Exception:
     if [ "${RESOLVE_OK}" = "true" ] && [ -f "${IMPORT_FILE}" ]; then
       echo "  ${domain_module}: retained resources found -- importing into EXISTING stack..."
 
-      RESOURCES_TO_IMPORT=$(cat "${IMPORT_FILE}")
-      CHANGESET_NAME="stage1-import-$(date +%s)"
-
-      # shellcheck disable=SC2086
-      aws cloudformation create-change-set \
-        --stack-name         "${STACK}" \
-        --change-set-name    "${CHANGESET_NAME}" \
-        --change-set-type    IMPORT \
-        --resources-to-import "${RESOURCES_TO_IMPORT}" \
-        --template-body      "file://${TEMPLATE}" \
-        --parameters         "file://${PARAMS}" \
-        --tags "Key=POCStage,Value=existing" "Key=Account,Value=${ACCOUNT}" \
-               "Key=Domain,Value=${DOMAIN}" "Key=Module,Value=${MODULE}" \
-               "Key=Repo,Value=tesco-ims-poc-demo" \
-        --region "${REGION}" \
-        ${EXTRA_CAPS}
-
-      WAITED=0
-      while true; do
-        CS_STATUS=$(aws cloudformation describe-change-set \
-          --stack-name      "${STACK}" \
-          --change-set-name "${CHANGESET_NAME}" \
-          --region          "${REGION}" \
-          --query 'Status' --output text 2>/dev/null || echo "UNKNOWN")
-        case "${CS_STATUS}" in
-          CREATE_COMPLETE) break ;;
-          FAILED)
-            CS_REASON=$(aws cloudformation describe-change-set \
-              --stack-name      "${STACK}" \
-              --change-set-name "${CHANGESET_NAME}" \
-              --region          "${REGION}" \
-              --query 'StatusReason' --output text 2>/dev/null || echo "unknown")
-            echo "  [FAIL] IMPORT changeset FAILED: ${CS_REASON}"
-            echo "  Falling back to normal deploy..."
-            aws cloudformation delete-change-set \
-              --stack-name "${STACK}" \
-              --change-set-name "${CHANGESET_NAME}" \
-              --region "${REGION}" 2>/dev/null || true
-            RESOLVE_OK=false
-            break ;;
-          *) sleep 10; WAITED=$((WAITED + 10)) ;;
-        esac
-        if [ "${WAITED}" -ge 300 ]; then
-          echo "  [FAIL] Timed out waiting for changeset -- falling back to normal deploy"
-          RESOLVE_OK=false; break
-        fi
-      done
-
-      if [ "${RESOLVE_OK}" = "true" ]; then
-        aws cloudformation execute-change-set \
-          --stack-name      "${STACK}" \
-          --change-set-name "${CHANGESET_NAME}" \
-          --region          "${REGION}"
-
-        WAITED=0
-        while true; do
-          S_STATUS=$(aws cloudformation describe-stacks \
-            --stack-name "${STACK}" --region "${REGION}" \
-            --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
-          case "${S_STATUS}" in
-            IMPORT_COMPLETE)
-              echo "  [OK] ${STACK} (imported from retained resources)"
-              break ;;
-            IMPORT_ROLLBACK_COMPLETE|IMPORT_ROLLBACK_FAILED|CREATE_FAILED)
-              echo "  [FAIL] Import failed: ${S_STATUS} -- check CloudFormation console"
-              exit 1 ;;
-            *) sleep 15; WAITED=$((WAITED + 15)) ;;
-          esac
-          if [ "${WAITED}" -ge 600 ]; then
-            echo "  [FAIL] Timed out waiting for import"; exit 1
-          fi
-        done
-        DEPLOYED+=("${STACK}")
+      # Two-phase import (Phase 1 filtered IMPORT + Phase 2 full UPDATE).
+      # Non-importable resources (Route, BucketPolicy) are created in Phase 2.
+      if cfn_import_then_update \
+            "${STACK}" "${REGION}" "${TEMPLATE}" "${IMPORT_CONFIG}" \
+            "${PARAMS}" "${IMPORT_FILE}" "existing" \
+            "${ACCOUNT}" "${DOMAIN}" "${MODULE}" "${EXTRA_CAPS}"; then
+        DEPLOYED+=("${STACK} (imported from retained resources)")
         echo ""
         continue
+      else
+        echo "  [WARN] ${domain_module}: import failed -- falling back to normal deploy"
       fi
     else
       echo "  ${domain_module}: no retained resources found -- proceeding with fresh deploy"

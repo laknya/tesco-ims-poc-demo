@@ -179,15 +179,19 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
 
-  PublicRoute:
-    Type: AWS::EC2::Route
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    DependsOn: GatewayAttachment
-    Properties:
-      RouteTableId: !Ref PublicRouteTable
-      DestinationCidrBlock: "0.0.0.0/0"
-      GatewayId: !Ref InternetGateway
+  # ---------------------------------------------------------------------------
+  # PublicRoute (0.0.0.0/0 -> InternetGateway) is INTENTIONALLY NOT MANAGED here.
+  #
+  # AWS::EC2::Route is not a CFN-importable resource type. To migrate it without
+  # any traffic disruption (Option A), the route is RETAINED on the EXISTING
+  # stack (DeletionPolicy: Retain) so it is never deleted, and is deliberately
+  # omitted from this NEW template. The physical route remains in the route table
+  # and continues to carry traffic; it becomes an "adopted but unmanaged" resource.
+  #
+  # Governance: cover this route with an AWS Config rule / drift detector so any
+  # change to the default route is alarmed. The route is trivially reconstructable:
+  #   RouteTableId: <PublicRouteTable>  DestinationCidrBlock: 0.0.0.0/0  GatewayId: <IGW>
+  # ---------------------------------------------------------------------------
 
   PublicSubnetAAssoc:
     Type: AWS::EC2::SubnetRouteTableAssociation

@@ -159,88 +159,19 @@ while IFS= read -r domain_module; do
   fi
 
   if [ -f "${IMPORT_CONFIG}" ] && [ -f "${ROLLBACK_IMPORT_FILE}" ]; then
-    # Import path: resource was retained when NEW stack was deleted above.
-    echo ">> Restoring ${OLD_STACK} via CFN Resource Import..."
-    echo "   (Resource retained from NEW stack deletion -- importing into EXISTING)"
+    # Import path: resources retained when NEW stack was deleted above.
+    # Two-phase (Phase 1 filtered IMPORT + Phase 2 full UPDATE) restores the
+    # EXISTING stack. Non-importable resources (Route, BucketPolicy) recreated in Phase 2.
+    echo ">> Restoring ${OLD_STACK} via CFN Resource Import (two-phase)..."
 
-    RESOURCES_TO_IMPORT=$(cat "${ROLLBACK_IMPORT_FILE}")
-
-    CHANGESET_NAME="rollback-import-$(date +%s)"
-    # shellcheck disable=SC2086
-    aws cloudformation create-change-set \
-      --stack-name         "${OLD_STACK}" \
-      --change-set-name    "${CHANGESET_NAME}" \
-      --change-set-type    IMPORT \
-      --resources-to-import "${RESOURCES_TO_IMPORT}" \
-      --template-body      "file://${TEMPLATE}" \
-      --parameters         "file://${PARAMS}" \
-      --tags "Key=POCStage,Value=rollback" "Key=Account,Value=${ACCOUNT}" \
-             "Key=Domain,Value=${DOMAIN}" "Key=Module,Value=${MODULE}" \
-      --region "${REGION}" \
-      ${EXTRA_CAPS}
-
-    echo "   Waiting for changeset to be ready..."
-    WAITED=0
-    while true; do
-      CS_STATUS=$(aws cloudformation describe-change-set \
-        --stack-name      "${OLD_STACK}" \
-        --change-set-name "${CHANGESET_NAME}" \
-        --region          "${REGION}" \
-        --query 'Status' --output text 2>/dev/null || echo "UNKNOWN")
-      case "${CS_STATUS}" in
-        CREATE_COMPLETE)
-          echo "   Changeset ready"
-          break ;;
-        FAILED)
-          CS_REASON=$(aws cloudformation describe-change-set \
-            --stack-name      "${OLD_STACK}" \
-            --change-set-name "${CHANGESET_NAME}" \
-            --region          "${REGION}" \
-            --query 'StatusReason' --output text 2>/dev/null || echo "unknown")
-          echo ""
-          echo "   [FAIL] IMPORT changeset FAILED for '${OLD_STACK}'"
-          echo "     Reason: ${CS_REASON}"
-          echo ""
-          exit 1 ;;
-        CREATE_IN_PROGRESS)
-          sleep 10; WAITED=$((WAITED + 10)) ;;
-        *)
-          sleep 10; WAITED=$((WAITED + 10)) ;;
-      esac
-      if [ "${WAITED}" -ge 300 ]; then
-        echo "   [FAIL] Timed out waiting for rollback changeset"
-        exit 1
-      fi
-    done
-
-    aws cloudformation execute-change-set \
-      --stack-name      "${OLD_STACK}" \
-      --change-set-name "${CHANGESET_NAME}" \
-      --region          "${REGION}"
-
-    echo "   Waiting for IMPORT_COMPLETE..."
-    WAITED=0
-    while true; do
-      STACK_STATUS=$(aws cloudformation describe-stacks \
-        --stack-name "${OLD_STACK}" --region "${REGION}" \
-        --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
-      case "${STACK_STATUS}" in
-        IMPORT_COMPLETE)
-          echo "   [OK] Restored: ${OLD_STACK} (via import)"
-          break ;;
-        IMPORT_ROLLBACK_COMPLETE|IMPORT_ROLLBACK_FAILED|ROLLBACK_COMPLETE|CREATE_FAILED)
-          echo "   [FAIL] Rollback import failed: ${STACK_STATUS}"
-          exit 1 ;;
-        IMPORT_IN_PROGRESS|CREATE_IN_PROGRESS)
-          sleep 15; WAITED=$((WAITED + 15)) ;;
-        *)
-          sleep 15; WAITED=$((WAITED + 15)) ;;
-      esac
-      if [ "${WAITED}" -ge 600 ]; then
-        echo "   [FAIL] Timed out waiting for rollback import"
-        exit 1
-      fi
-    done
+    if ! cfn_import_then_update \
+          "${OLD_STACK}" "${REGION}" "${TEMPLATE}" "${IMPORT_CONFIG}" \
+          "${PARAMS}" "${ROLLBACK_IMPORT_FILE}" "rollback" \
+          "${ACCOUNT}" "${DOMAIN}" "${MODULE}" "${EXTRA_CAPS}"; then
+      echo "   [FAIL] Rollback import failed for '${OLD_STACK}'."
+      exit 1
+    fi
+    echo "   [OK] Restored: ${OLD_STACK} (via import)"
 
   else
     # Standard module: deploy (create or update) from existing-structure template.

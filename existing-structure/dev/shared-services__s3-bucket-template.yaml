@@ -128,8 +128,13 @@ Resources:
         - Key: AccountId
           Value: !Ref AccountId
 
+  # S3BucketPolicy is RETAINED so the DenyNonVpcAccess guardrail survives the
+  # EXISTING stack deletion and is never absent during migration. The NEW stack
+  # re-applies the identical policy in Phase 2 (PutBucketPolicy is idempotent).
   S3BucketPolicy:
     Type: AWS::S3::BucketPolicy
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     DependsOn: S3Bucket
     Properties:
       Bucket: !Ref S3Bucket
