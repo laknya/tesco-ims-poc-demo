@@ -49,11 +49,7 @@ while IFS= read -r domain_module; do
     continue
   fi
   echo ">> Deleting ${STACK}..."
-  aws cloudformation delete-stack \
-    --stack-name "${STACK}" --region "${REGION}"
-  aws cloudformation wait stack-delete-complete \
-    --stack-name "${STACK}" --region "${REGION}"
-  echo "   [OK] Deleted"
+  cfn_delete_stack_robust "${STACK}" "${REGION}" ">>"
 done < <(discover_new_modules "${ACCOUNT}" | tac)
 
 # -- Step 2: Restore EXISTING stacks (forward dependency order: vpc -> kms -> s3) --

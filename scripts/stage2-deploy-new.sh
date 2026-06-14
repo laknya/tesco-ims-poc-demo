@@ -304,16 +304,7 @@ print(json.dumps(result))
       --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
 
     if [ "${OLD_STACK_STATUS}" != "DOES_NOT_EXIST" ]; then
-      echo "  |  Deleting '${OLD_STACK}'..."
-      echo "  |  DeletionPolicy: Retain in the template keeps the resource in AWS."
-      echo "  |  Only CFN ownership is released -- no AWS resource is deleted."
-      aws cloudformation delete-stack \
-        --stack-name "${OLD_STACK}" \
-        --region "${REGION}"
-      aws cloudformation wait stack-delete-complete \
-        --stack-name "${OLD_STACK}" \
-        --region "${REGION}"
-      echo "  |  [OK] '${OLD_STACK}' CFN stack deleted, resource retained in AWS"
+      cfn_delete_stack_robust "${OLD_STACK}" "${REGION}" "  |"
     else
       echo "  |  No existing stack found -- resource may be unmanaged, importing directly"
     fi

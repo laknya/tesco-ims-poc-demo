@@ -130,9 +130,13 @@ Resources:
 
   S3BucketPolicy:
     Type: AWS::S3::BucketPolicy
+    # DeletionPolicy: Retain -- the bucket policy has a VPC-only deny that blocks
+    # s3:DeleteBucketPolicy from GitHub Actions (which runs outside the VPC).
+    # Retaining avoids the AccessDenied DELETE_FAILED. The NEW stack's policy
+    # replaces this one when it deploys.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     # Explicit DependsOn ensures CloudFormation creates S3Bucket first.
-    # CloudFormation can infer this from !Ref / !GetAtt below, but explicit
-    # DependsOn is self-documenting: the bucket must exist before its policy.
     DependsOn: S3Bucket
     Properties:
       Bucket: !Ref S3Bucket
