@@ -163,12 +163,14 @@ def main():
     for res in template["Resources"].values():
         _clean_depends_on(res, dropped)
 
-    # Drop the ENTIRE Outputs section. A CFN IMPORT change set cannot add or
-    # modify Outputs ("you cannot modify or add [Outputs]") -- the import template
-    # must contain only the resources being imported. Phase 2 (full-template
-    # deploy) re-adds all Outputs/Exports after the resources are adopted.
+    # Drop sections a CFN IMPORT change set will not accept. CFN rejects adding
+    # or modifying Outputs ("you cannot modify or add [Outputs]") and likewise
+    # template-level Metadata during import. The import template must contain only
+    # the resources being imported (plus Parameters). Phase 2 (full-template
+    # deploy) re-adds Outputs/Exports/Metadata after the resources are adopted.
     had_outputs = "Outputs" in template
     template.pop("Outputs", None)
+    template.pop("Metadata", None)
 
     with open(args.output, "w") as fh:
         yaml.dump(template, fh, Dumper=_CfnDumper, sort_keys=False, default_flow_style=False)

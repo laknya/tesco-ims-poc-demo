@@ -323,11 +323,15 @@ class TestCfnLint:
             (f"{module_path}: filtered template resources {produced} "
              f"!= import-config resources {expected}")
 
-        # A CFN IMPORT change set cannot add Outputs -- the filtered template
-        # must have NO Outputs section (Phase 2 re-adds them).
-        assert "Outputs:" not in out_template.read_text(), \
+        # A CFN IMPORT change set cannot add Outputs or template-level Metadata --
+        # the filtered template must have NEITHER section (Phase 2 re-adds them).
+        filtered_text = out_template.read_text()
+        assert "Outputs:" not in filtered_text, \
             (f"{module_path}: filtered import template must NOT contain Outputs "
              f"(CFN rejects 'modify or add [Outputs]' during import).")
+        assert not any(line.rstrip() == "Metadata:" for line in filtered_text.splitlines()), \
+            (f"{module_path}: filtered import template must NOT contain a top-level "
+             f"Metadata section (CFN rejects it during import).")
 
         # cfn-lint: tolerate warnings (exit 4), fail only on errors (exit 2 / contains 'E')
         lint = cfn_lint(str(out_template))
