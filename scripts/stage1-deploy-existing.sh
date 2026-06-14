@@ -90,12 +90,20 @@ except Exception:
     pass
 " 2>/dev/null)
     if [ -n "${FIRST_LOGICAL_ID}" ]; then
+      OWN_STDERR=$(mktemp)
       RES_STATUS=$(aws cloudformation describe-stack-resource \
         --stack-name "${STACK}" --region "${REGION}" \
         --logical-resource-id "${FIRST_LOGICAL_ID}" \
-        --query 'StackResourceDetail.ResourceStatus' --output text 2>/dev/null \
-        || echo "NOT_FOUND")
-      if [ "${RES_STATUS}" = "NOT_FOUND" ]; then
+        --query 'StackResourceDetail.ResourceStatus' --output text 2>"${OWN_STDERR}" \
+        || echo "LOOKUP_FAILED")
+      OWN_ERR=$(cat "${OWN_STDERR}"); rm -f "${OWN_STDERR}"
+
+      if echo "${OWN_ERR}" | grep -qi "AccessDenied\|not authorized"; then
+        # Cannot verify ownership due to missing cloudformation:DescribeStackResource.
+        # Do NOT delete the stack -- assume it owns its resources and proceed normally.
+        echo "  [WARN] Cannot verify resource ownership (AccessDenied on DescribeStackResource)."
+        echo "  Skipping ownership check. Add cloudformation:DescribeStackResource to the deploy role."
+      elif [ "${RES_STATUS}" = "LOOKUP_FAILED" ]; then
         echo "  [WARN] '${STACK}' (${STACK_STATUS}) does not own '${FIRST_LOGICAL_ID}'."
         echo "  Resource exists in AWS but not in this stack. Clearing to re-import."
         cfn_delete_stack_robust "${STACK}" "${REGION}" "  "

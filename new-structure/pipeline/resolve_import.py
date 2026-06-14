@@ -249,10 +249,24 @@ def resolve_identifier(id_spec, resource_type, stack_name, stack_cache,
                 return physical_id
             except ClientError as exc:
                 code = exc.response["Error"]["Code"]
-                if code not in ("ValidationError", "StackInstanceNotFoundException"):
+                if code in ("ValidationError", "StackInstanceNotFoundException"):
+                    # Stack does not exist -- try tag fallback below
+                    pass
+                elif code in ("AccessDenied", "AccessDeniedException"):
+                    # IAM policy is missing cloudformation:DescribeStackResource.
+                    # Fall through to tag-based lookup which uses EC2/KMS/S3 APIs
+                    # that the deploy role can access without this permission.
+                    if fallback_by_tag:
+                        print(f"    [WARN] DescribeStackResource denied -- using tag fallback",
+                              file=sys.stderr)
+                    else:
+                        print(f"  [FAIL] AccessDenied on DescribeStackResource for '{logical_id}'."
+                              f" Add cloudformation:DescribeStackResource to the deploy role,"
+                              f" or re-run with --fallback-by-tag.", file=sys.stderr)
+                        sys.exit(2)
+                else:
                     print(f"  [FAIL] AWS error looking up {logical_id}: {exc}", file=sys.stderr)
                     sys.exit(2)
-                # Stack does not exist -- try tag fallback below
 
         if not fallback_by_tag:
             print(
