@@ -41,23 +41,21 @@ while IFS= read -r domain_module; do
   TEMPLATE="existing-structure/${ACCOUNT}/${DOMAIN}__${MODULE}-template.yaml"
   PARAMS="existing-structure/${ACCOUNT}/${DOMAIN}__${MODULE}-params.json"
   STACK=$(cfn_stack_name "EXISTING" "${DOMAIN}" "${MODULE}" "${ACCOUNT}")
+  IMPORT_CONFIG="new-structure/modules/${DOMAIN}/${MODULE}/import-config.json"
+  NEW_STACK=$(cfn_stack_name "NEW" "${DOMAIN}" "${MODULE}" "${ACCOUNT}")
 
   echo ">> Deploying ${domain_module}: ${STACK}"
   echo "    template : ${TEMPLATE}"
   echo "    params   : ${PARAMS}"
 
-  # If this module uses CFN Resource Import (e.g. s3-bucket) and the EXISTING
-  # stack is in DELETE_FAILED (left over from a previous stage2 run that tried
-  # to release it), a plain deploy would create a changeset that EarlyValidation
-  # rejects because the bucket name already exists in AWS (it was retained).
-  # Fix: force-clear the stuck stack with --retain-resources so the resource
-  # stays in AWS, then skip the re-deploy -- stage2 will import it.
-  IMPORT_CONFIG="new-structure/modules/${DOMAIN}/${MODULE}/import-config.json"
   STACK_STATUS=$(aws cloudformation describe-stacks \
     --stack-name "${STACK}" --region "${REGION}" \
     --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
 
-  if [ -f "${IMPORT_CONFIG}" ] && [ "${STACK_STATUS}" = "DELETE_FAILED" ]; then
+  # If the EXISTING stack is in DELETE_FAILED (left over from a previous stage2 run),
+  # force-clear the stuck stack with --retain-resources so the resource stays in AWS,
+  # then continue -- stage2 will import it.
+  if [ "${STACK_STATUS}" = "DELETE_FAILED" ]; then
     echo "  [WARN] '${STACK}' is in DELETE_FAILED (left by a previous stage2 run)."
     echo "  Force-clearing stuck stack -- resource is retained in AWS."
     cfn_delete_stack_robust "${STACK}" "${REGION}" "  "
@@ -72,6 +70,119 @@ while IFS= read -r domain_module; do
   EXTRA_CAPS=""
   if grep -q "Type: AWS::IAM::" "${TEMPLATE}" 2>/dev/null; then
     EXTRA_CAPS="--capabilities CAPABILITY_NAMED_IAM"
+  fi
+
+  # If this module has an import-config.json and the EXISTING stack does not exist:
+  #   - Check if the NEW stack already exists (already migrated -- skip)
+  #   - Otherwise try to locate retained resources via resolve_import --fallback-by-tag
+  #     If resources found -> CFN Import into EXISTING stack (re-run after cleanup)
+  #     If no resources found -> normal deploy (fresh environment)
+  if [ -f "${IMPORT_CONFIG}" ] && [ "${STACK_STATUS}" = "DOES_NOT_EXIST" ]; then
+    NEW_STATUS=$(aws cloudformation describe-stacks \
+      --stack-name "${NEW_STACK}" --region "${REGION}" \
+      --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+
+    if [ "${NEW_STATUS}" != "DOES_NOT_EXIST" ]; then
+      echo "  [OK] ${domain_module}: already migrated to NEW stack (${NEW_STATUS}) -- skipping"
+      DEPLOYED+=("${STACK} (already migrated -- NEW stack owns resource)")
+      echo ""
+      continue
+    fi
+
+    # Attempt to find retained resources via CFN tags
+    IMPORT_FILE="/tmp/tesco-ims-stage1-${ACCOUNT}-${DOMAIN}-${MODULE}.json"
+    echo "  ${domain_module}: EXISTING stack absent -- checking for retained resources via tags..."
+
+    python3 new-structure/pipeline/resolve_import.py \
+      --stack-name "${STACK}" \
+      --config     "${IMPORT_CONFIG}" \
+      --params     "${PARAMS}" \
+      --region     "${REGION}" \
+      --output     "${IMPORT_FILE}" \
+      --fallback-by-tag 2>/dev/null && RESOLVE_OK=true || RESOLVE_OK=false
+
+    if [ "${RESOLVE_OK}" = "true" ] && [ -f "${IMPORT_FILE}" ]; then
+      echo "  ${domain_module}: retained resources found -- importing into EXISTING stack..."
+
+      RESOURCES_TO_IMPORT=$(cat "${IMPORT_FILE}")
+      CHANGESET_NAME="stage1-import-$(date +%s)"
+
+      # shellcheck disable=SC2086
+      aws cloudformation create-change-set \
+        --stack-name         "${STACK}" \
+        --change-set-name    "${CHANGESET_NAME}" \
+        --change-set-type    IMPORT \
+        --resources-to-import "${RESOURCES_TO_IMPORT}" \
+        --template-body      "file://${TEMPLATE}" \
+        --parameters         "file://${PARAMS}" \
+        --tags "Key=POCStage,Value=existing" "Key=Account,Value=${ACCOUNT}" \
+               "Key=Domain,Value=${DOMAIN}" "Key=Module,Value=${MODULE}" \
+               "Key=Repo,Value=tesco-ims-poc-demo" \
+        --region "${REGION}" \
+        ${EXTRA_CAPS}
+
+      WAITED=0
+      while true; do
+        CS_STATUS=$(aws cloudformation describe-change-set \
+          --stack-name      "${STACK}" \
+          --change-set-name "${CHANGESET_NAME}" \
+          --region          "${REGION}" \
+          --query 'Status' --output text 2>/dev/null || echo "UNKNOWN")
+        case "${CS_STATUS}" in
+          CREATE_COMPLETE) break ;;
+          FAILED)
+            CS_REASON=$(aws cloudformation describe-change-set \
+              --stack-name      "${STACK}" \
+              --change-set-name "${CHANGESET_NAME}" \
+              --region          "${REGION}" \
+              --query 'StatusReason' --output text 2>/dev/null || echo "unknown")
+            echo "  [FAIL] IMPORT changeset FAILED: ${CS_REASON}"
+            echo "  Falling back to normal deploy..."
+            aws cloudformation delete-change-set \
+              --stack-name "${STACK}" \
+              --change-set-name "${CHANGESET_NAME}" \
+              --region "${REGION}" 2>/dev/null || true
+            RESOLVE_OK=false
+            break ;;
+          *) sleep 10; WAITED=$((WAITED + 10)) ;;
+        esac
+        if [ "${WAITED}" -ge 300 ]; then
+          echo "  [FAIL] Timed out waiting for changeset -- falling back to normal deploy"
+          RESOLVE_OK=false; break
+        fi
+      done
+
+      if [ "${RESOLVE_OK}" = "true" ]; then
+        aws cloudformation execute-change-set \
+          --stack-name      "${STACK}" \
+          --change-set-name "${CHANGESET_NAME}" \
+          --region          "${REGION}"
+
+        WAITED=0
+        while true; do
+          S_STATUS=$(aws cloudformation describe-stacks \
+            --stack-name "${STACK}" --region "${REGION}" \
+            --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+          case "${S_STATUS}" in
+            IMPORT_COMPLETE)
+              echo "  [OK] ${STACK} (imported from retained resources)"
+              break ;;
+            IMPORT_ROLLBACK_COMPLETE|IMPORT_ROLLBACK_FAILED|CREATE_FAILED)
+              echo "  [FAIL] Import failed: ${S_STATUS} -- check CloudFormation console"
+              exit 1 ;;
+            *) sleep 15; WAITED=$((WAITED + 15)) ;;
+          esac
+          if [ "${WAITED}" -ge 600 ]; then
+            echo "  [FAIL] Timed out waiting for import"; exit 1
+          fi
+        done
+        DEPLOYED+=("${STACK}")
+        echo ""
+        continue
+      fi
+    else
+      echo "  ${domain_module}: no retained resources found -- proceeding with fresh deploy"
+    fi
   fi
 
   # shellcheck disable=SC2086

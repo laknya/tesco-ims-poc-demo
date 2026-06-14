@@ -2,7 +2,7 @@
   "version": "1.0.0",
   "type_name": "TescoIMS::Security::KmsKey",
   "released": "2026-06-12",
-  "template_hash": "sha256:37c2c43a7470696da81e80edc2d0207405bd5f8d5a6d9fd99834f30fc5132d88",
+  "template_hash": "sha256:c8137ac38542c3c10eac6dd4a805c01369afa44fc1b2de3fddde2cf3735c3654",
   "status": "default",
   "breaking_changes": [],
   "changelog": "Initial release. Replaces 68 per-account kms-template.yaml copies. Key policy principals (KeyAdminArn, KeyUsageArn) sourced from JSON config \u2014 security team owns policy, platform team owns template.",

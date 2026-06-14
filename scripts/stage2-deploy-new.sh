@@ -19,6 +19,12 @@
 #
 #   bash stage2-deploy-new.sh dev networking/vpc-baseline shared-services/s3-bucket
 #     -> deploys only those two modules
+#
+# THREE-PASS MIGRATION FLOW:
+#   Pass A: Pre-flight    -- version check all modules upfront (fail fast)
+#   Pass B: Resolve       -- while EXISTING stacks still exist, resolve import IDs
+#   Pass C: Release       -- delete ALL EXISTING stacks in reverse order
+#   Pass D: Import/Deploy -- import (or deploy) ALL NEW stacks in forward order
 set -e
 
 ACCOUNT=${1:-dev}
@@ -47,17 +53,10 @@ echo ""
 
 pip install pyyaml cfn-lint -q 2>/dev/null || true
 
-# -- Version integrity check -------------------------------------------
-echo ">> Verifying module version integrity (template hash vs version.json)..."
-python3 new-structure/pipeline/check_module_versions.py
-echo ""
-
 # -- Schema validation -------------------------------------------------
 echo ">> Validating account configs against module schemas..."
 python3 new-structure/pipeline/validate_schema.py --account "${ACCOUNT}"
 echo ""
-
-DEPLOYED=()
 
 # -- Build the deploy list: all discovered modules OR the explicit filter --
 MODULES_TO_DEPLOY=()
@@ -85,37 +84,174 @@ for dm in "${MODULES_TO_DEPLOY[@]}"; do
 done
 echo ""
 
-# -- Deploy each module ------------------------------------------------
+# ==========================================================================
+# PASS A: Pre-flight -- version integrity check for ALL modules upfront.
+# Fail fast before touching any AWS resource.
+# ==========================================================================
+echo ">> PASS A: Pre-flight -- version integrity check..."
+python3 new-structure/pipeline/check_module_versions.py
+echo ""
+
+for domain_module in "${MODULES_TO_DEPLOY[@]}"; do
+  DOMAIN="${domain_module%/*}"
+  MODULE="${domain_module#*/}"
+  TEMPLATE="new-structure/modules/${domain_module}/template.yaml"
+
+  # Lint template before deploy
+  cfn-lint "${TEMPLATE}"
+  echo "  [OK] cfn-lint ${domain_module}"
+done
+echo "  [OK] Pre-flight passed for all ${#MODULES_TO_DEPLOY[@]} module(s)"
+echo ""
+
+# ==========================================================================
+# PASS B: Resolve -- while ALL EXISTING stacks still exist, resolve import
+# identifiers for each module that has an import-config.json.
+# Save resolved import JSON to /tmp for use in Pass D.
+# Skip if the NEW stack already exists (already migrated -- idempotent re-run).
+# ==========================================================================
+echo ">> PASS B: Resolve -- capturing physical resource IDs from EXISTING stacks..."
+echo ""
+
+for domain_module in "${MODULES_TO_DEPLOY[@]}"; do
+  DOMAIN="${domain_module%/*}"
+  MODULE="${domain_module#*/}"
+
+  IMPORT_CONFIG="new-structure/modules/${domain_module}/import-config.json"
+  OLD_STACK=$(cfn_stack_name "EXISTING" "${DOMAIN}" "${MODULE}" "${ACCOUNT}")
+  NEW_STACK=$(cfn_stack_name "NEW" "${DOMAIN}" "${MODULE}" "${ACCOUNT}")
+  RESOLVED="/tmp/new-resolved-${ACCOUNT}-${DOMAIN}-${MODULE}.json"
+  IMPORT_FILE="/tmp/tesco-ims-import-${ACCOUNT}-${DOMAIN}-${MODULE}.json"
+
+  if [ ! -f "${IMPORT_CONFIG}" ]; then
+    echo "  ${domain_module}: no import-config.json -- will deploy fresh in Pass D"
+    continue
+  fi
+
+  # Check if NEW stack already exists -- idempotent re-run
+  NEW_STATUS=$(aws cloudformation describe-stacks \
+    --stack-name "${NEW_STACK}" --region "${REGION}" \
+    --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+
+  if [ "${NEW_STATUS}" != "DOES_NOT_EXIST" ]; then
+    echo "  ${domain_module}: NEW stack already exists (${NEW_STATUS}) -- skipping resolve"
+    continue
+  fi
+
+  # Resolve parameters first (needed for param-source identifiers)
+  python3 new-structure/pipeline/resolve_parameters.py \
+    --account "${ACCOUNT}" \
+    --domain  "${DOMAIN}" \
+    --module  "${MODULE}" \
+    --output  "${RESOLVED}" >/dev/null
+
+  echo "  ${domain_module}: resolving import identifiers from EXISTING stack '${OLD_STACK}'..."
+  python3 new-structure/pipeline/resolve_import.py \
+    --stack-name "${OLD_STACK}" \
+    --config     "${IMPORT_CONFIG}" \
+    --params     "${RESOLVED}" \
+    --region     "${REGION}" \
+    --output     "${IMPORT_FILE}" \
+    --fallback-by-tag
+
+  echo "  [OK] ${domain_module}: import identifiers saved to ${IMPORT_FILE}"
+  echo ""
+done
+
+echo ">> PASS B complete."
+echo ""
+
+# ==========================================================================
+# PASS C: Release -- delete ALL EXISTING stacks in REVERSE discovery order.
+# S3 must be deleted before VPC because S3 imports VPC's exported VpcId --
+# an exported value cannot be deleted while a stack imports it.
+# DeletionPolicy: Retain keeps resources in AWS -- only CFN ownership released.
+# Skip if EXISTING stack is already gone.
+# ==========================================================================
+echo ">> PASS C: Release -- deleting EXISTING stacks (reverse order)..."
+echo ""
+
+# Collect modules in reverse order for deletion
+REVERSE_MODULES=()
+while IFS= read -r domain_module; do
+  REVERSE_MODULES=("${domain_module}" "${REVERSE_MODULES[@]}")
+done < <(printf '%s\n' "${MODULES_TO_DEPLOY[@]}")
+
+for domain_module in "${REVERSE_MODULES[@]}"; do
+  DOMAIN="${domain_module%/*}"
+  MODULE="${domain_module#*/}"
+  OLD_STACK=$(cfn_stack_name "EXISTING" "${DOMAIN}" "${MODULE}" "${ACCOUNT}")
+
+  OLD_STATUS=$(aws cloudformation describe-stacks \
+    --stack-name "${OLD_STACK}" --region "${REGION}" \
+    --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+
+  if [ "${OLD_STATUS}" = "DOES_NOT_EXIST" ]; then
+    echo "  ${domain_module}: EXISTING stack '${OLD_STACK}' not found -- skipping"
+    continue
+  fi
+
+  echo "  ${domain_module}: releasing '${OLD_STACK}' (DeletionPolicy: Retain preserves resources)..."
+  cfn_delete_stack_robust "${OLD_STACK}" "${REGION}" "  |"
+  echo "  [OK] ${domain_module}: EXISTING stack released"
+  echo ""
+done
+
+echo ">> PASS C complete."
+echo ""
+
+# ==========================================================================
+# PASS D: Import/Deploy -- import or deploy ALL NEW stacks in FORWARD order.
+# For modules with import-config.json: use --change-set-type IMPORT with
+# the pre-resolved identifiers from Pass B.
+# For modules without import-config.json: use aws cloudformation deploy.
+# Skip if NEW stack already exists (idempotent re-run).
+# ==========================================================================
+echo ">> PASS D: Import/Deploy -- creating NEW stacks..."
+echo ""
+
+DEPLOYED=()
+
 for domain_module in "${MODULES_TO_DEPLOY[@]}"; do
   DOMAIN="${domain_module%/*}"
   MODULE="${domain_module#*/}"
 
   VERSION=$(python3 -c "import json; print(json.load(open('new-structure/modules/${domain_module}/version.json'))['version'])")
   TYPE=$(python3 -c "import json; print(json.load(open('new-structure/modules/${domain_module}/version.json'))['type_name'])")
-  STACK=$(cfn_stack_name "NEW" "${DOMAIN}" "${MODULE}" "${ACCOUNT}")
+  NEW_STACK=$(cfn_stack_name "NEW" "${DOMAIN}" "${MODULE}" "${ACCOUNT}")
   TEMPLATE="new-structure/modules/${domain_module}/template.yaml"
   RESOLVED="/tmp/new-resolved-${ACCOUNT}-${DOMAIN}-${MODULE}.json"
+  IMPORT_CONFIG="new-structure/modules/${domain_module}/import-config.json"
+  IMPORT_FILE="/tmp/tesco-ims-import-${ACCOUNT}-${DOMAIN}-${MODULE}.json"
 
   echo "  +- Module  : ${TYPE}  v${VERSION}"
-  echo "  |  Stack   : ${STACK}"
+  echo "  |  Stack   : ${NEW_STACK}"
   echo "  |  Template: ${TEMPLATE}"
 
-  # Lint template before deploy
-  cfn-lint "${TEMPLATE}"
-  echo "  |  cfn-lint [OK]"
+  # Check whether the new stack already exists (re-run idempotency).
+  NEW_STATUS=$(aws cloudformation describe-stacks \
+    --stack-name "${NEW_STACK}" --region "${REGION}" \
+    --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
 
-  # Step A: 4-layer parameter resolution
-  echo "  +- Step A: Resolving parameters (4-layer config)..."
-  python3 new-structure/pipeline/resolve_parameters.py \
-    --account "${ACCOUNT}" \
-    --domain  "${DOMAIN}" \
-    --module  "${MODULE}" \
-    --output  "${RESOLVED}"
+  if [ "${NEW_STATUS}" != "DOES_NOT_EXIST" ]; then
+    echo "  |  [OK] NEW stack already exists (${NEW_STATUS}) -- skipping"
+    DEPLOYED+=("${NEW_STACK}")
+    echo ""
+    continue
+  fi
 
-  # Step B: Wait for any cross-stack dependencies before deploying.
-  # Any resolved parameter ending in "StackName" is treated as a dependency:
-  # the script polls until that stack reaches a ready or failed terminal state.
-  # This makes parallel CI matrix jobs safe regardless of which module is added next.
+  # Resolve parameters (may already exist from Pass B for import modules)
+  if [ ! -f "${RESOLVED}" ]; then
+    echo "  +- Step: Resolving parameters (4-layer config)..."
+    python3 new-structure/pipeline/resolve_parameters.py \
+      --account "${ACCOUNT}" \
+      --domain  "${DOMAIN}" \
+      --module  "${MODULE}" \
+      --output  "${RESOLVED}"
+  fi
+
+  # Step: Wait for any cross-stack dependencies before deploying.
+  # Any resolved parameter ending in "StackName" is treated as a dependency.
   DEPS=$(python3 -c "
 import json, sys
 params = json.load(open('${RESOLVED}'))
@@ -126,26 +262,20 @@ for p in params:
 " 2>/dev/null || true)
 
   for dep in ${DEPS}; do
-    DEP_PARAM="${dep%%=*}"    # e.g. VpcStackName
-    DEP_STACK="${dep##*=}"    # e.g. poc-NEW-networking-vpc-baseline-dev
+    DEP_PARAM="${dep%%=*}"
+    DEP_STACK="${dep##*=}"
 
     echo "  +- Cross-stack dependency detected"
     echo "  |  Parameter : ${DEP_PARAM}"
     echo "  |  Stack     : ${DEP_STACK}"
     echo "  |  Waiting for '${DEP_STACK}' to be ready before deploying ${MODULE}..."
 
-    # Two separate timeouts:
-    #   NOT_FOUND_GRACE (120s) -- time allowed for a parallel CI job to START creating
-    #                            the dependency. After this we assume it isn't coming.
-    #   IN_PROGRESS_MAX (600s) -- time allowed for a stack that IS creating to finish.
     WAITED=0
     NOT_FOUND_GRACE=120
     IN_PROGRESS_MAX=600
     SEEN_IN_PROGRESS=false
 
     while true; do
-      # Capture stdout and stderr separately so we can distinguish
-      # "stack does not exist" (valid wait) from any other AWS error (fail fast).
       AWS_OUT=$(aws cloudformation describe-stacks \
         --stack-name "${DEP_STACK}" --region "${REGION}" \
         --query 'Stacks[0].StackStatus' --output text 2>/tmp/aws_dep_err_$$.txt)
@@ -171,7 +301,7 @@ for p in params:
       fi
 
       case "${DEP_STATUS}" in
-        CREATE_COMPLETE|UPDATE_COMPLETE)
+        CREATE_COMPLETE|UPDATE_COMPLETE|IMPORT_COMPLETE|IMPORT_ROLLBACK_COMPLETE)
           echo "  |  [OK] '${DEP_STACK}' is ready (${DEP_STATUS}) -- continuing with ${MODULE}"
           break ;;
 
@@ -183,7 +313,7 @@ for p in params:
           echo ""
           exit 1 ;;
 
-        CREATE_IN_PROGRESS|UPDATE_IN_PROGRESS|UPDATE_COMPLETE_CLEANUP_IN_PROGRESS)
+        CREATE_IN_PROGRESS|UPDATE_IN_PROGRESS|UPDATE_COMPLETE_CLEANUP_IN_PROGRESS|IMPORT_IN_PROGRESS)
           SEEN_IN_PROGRESS=true
           if [ "${WAITED}" -ge "${IN_PROGRESS_MAX}" ]; then
             echo ""
@@ -199,13 +329,6 @@ for p in params:
 
         DOES_NOT_EXIST)
           if [ "${WAITED}" -ge "${NOT_FOUND_GRACE}" ]; then
-            # Grace period expired -- no parallel job created the dependency.
-            # Try to find and deploy the dependency module ourselves before
-            # continuing. Covers delta-mode CI runs where only the dependent
-            # module was in the matrix (e.g. only s3-bucket.json changed but
-            # vpc-baseline was never deployed for this account).
-            echo "  | Grace period expired. Checking whether dependency is a known module..."
-
             DEP_DOMAIN_MODULE=""
             while IFS= read -r dm; do
               CANDIDATE=$(cfn_stack_name "NEW" "${dm%/*}" "${dm#*/}" "${ACCOUNT}")
@@ -246,75 +369,25 @@ for p in params:
     done
   done
 
-  # Step C: Deploy (or import) from the ONE master template.
-  #
-  # If the module directory contains an import-config.json AND the new stack
-  # does not yet exist, Stage 2 uses CloudFormation Resource Import instead of
-  # a regular deploy.  This is the correct production pattern for globally unique
-  # resources (e.g. S3 bucket names) that cannot be recreated:
-  #
-  #   1. Delete the EXISTING stack with a plain delete-stack.
-  #      DeletionPolicy: Retain on the resource in the EXISTING template means
-  #      CloudFormation keeps the resource in AWS -- only CFN ownership is released.
-  #      NOTE: --retain-resources is only valid for DELETE_FAILED stacks; the
-  #      correct mechanism for a normal delete is DeletionPolicy: Retain in the template.
-  #   2. Import the now-unmanaged resource into the NEW stack via --change-set-type IMPORT.
-  #
-  # Any module without import-config.json (VPC, KMS) uses the standard deploy path.
-
-  IMPORT_CONFIG="new-structure/modules/${domain_module}/import-config.json"
-  OLD_STACK=$(cfn_stack_name "EXISTING" "${DOMAIN}" "${MODULE}" "${ACCOUNT}")
-
-  # Check whether the new stack already exists (re-run idempotency).
-  NEW_STACK_STATUS=$(aws cloudformation describe-stacks \
-    --stack-name "${STACK}" --region "${REGION}" \
-    --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
-
   # Detect whether this template creates IAM resources (requires capabilities).
   EXTRA_CAPS=""
   if grep -q "Type: AWS::IAM::" "${TEMPLATE}" 2>/dev/null; then
     EXTRA_CAPS="--capabilities CAPABILITY_NAMED_IAM"
   fi
 
-  if [ -f "${IMPORT_CONFIG}" ] && [ "${NEW_STACK_STATUS}" = "DOES_NOT_EXIST" ]; then
-    echo "  +- Step C: Migrating via CFN Resource Import [ModuleVersion=${VERSION}]..."
-    echo "  |  Globally unique resources cannot be recreated alongside the existing"
-    echo "  |  stack. CFN Import transfers ownership without deleting the resource."
+  if [ -f "${IMPORT_CONFIG}" ] && [ -f "${IMPORT_FILE}" ]; then
+    # Import path: use pre-resolved identifiers from Pass B.
+    echo "  +- Step D: Migrating via CFN Resource Import [ModuleVersion=${VERSION}]..."
+    echo "  |  Physical resource IDs resolved in Pass B from EXISTING stack."
 
-    # Build --resources-to-import JSON from import-config + resolved params.
-    RESOURCES_TO_IMPORT=$(python3 -c "
-import json, sys
-cfg    = json.load(open('${IMPORT_CONFIG}'))
-params = {p['ParameterKey']: p['ParameterValue']
-          for p in json.load(open('${RESOLVED}'))}
-result = []
-for r in cfg['resources_to_import']:
-    result.append({
-        'ResourceType':      r['ResourceType'],
-        'LogicalResourceId': r['LogicalResourceId'],
-        'ResourceIdentifier': {r['IdentifierKey']: params[r['IdentifierParam']]}
-    })
-print(json.dumps(result))
-")
-    echo "  |  Resources to import: ${RESOURCES_TO_IMPORT}"
-
-    # Release the resource from the existing stack (resources are RETAINED).
-    OLD_STACK_STATUS=$(aws cloudformation describe-stacks \
-      --stack-name "${OLD_STACK}" --region "${REGION}" \
-      --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
-
-    if [ "${OLD_STACK_STATUS}" != "DOES_NOT_EXIST" ]; then
-      cfn_delete_stack_robust "${OLD_STACK}" "${REGION}" "  |"
-    else
-      echo "  |  No existing stack found -- resource may be unmanaged, importing directly"
-    fi
-
-    # Import the retained resource into the new stack.
     CHANGESET_NAME="import-$(date +%s)"
     echo "  |  Creating IMPORT changeset '${CHANGESET_NAME}'..."
+
+    RESOURCES_TO_IMPORT=$(cat "${IMPORT_FILE}")
+
     # shellcheck disable=SC2086
     aws cloudformation create-change-set \
-      --stack-name         "${STACK}" \
+      --stack-name         "${NEW_STACK}" \
       --change-set-name    "${CHANGESET_NAME}" \
       --change-set-type    IMPORT \
       --resources-to-import "${RESOURCES_TO_IMPORT}" \
@@ -328,29 +401,93 @@ print(json.dumps(result))
       ${EXTRA_CAPS}
 
     echo "  |  Waiting for changeset to be ready..."
-    aws cloudformation wait change-set-create-complete \
-      --stack-name      "${STACK}" \
-      --change-set-name "${CHANGESET_NAME}" \
-      --region          "${REGION}"
+    # Use a polling loop for the changeset status -- aws wait can be opaque on failure.
+    WAITED=0
+    while true; do
+      CS_STATUS=$(aws cloudformation describe-change-set \
+        --stack-name      "${NEW_STACK}" \
+        --change-set-name "${CHANGESET_NAME}" \
+        --region          "${REGION}" \
+        --query 'Status' --output text 2>/dev/null || echo "UNKNOWN")
+
+      case "${CS_STATUS}" in
+        CREATE_COMPLETE)
+          echo "  |  Changeset ready (CREATE_COMPLETE)"
+          break ;;
+        FAILED)
+          CS_REASON=$(aws cloudformation describe-change-set \
+            --stack-name      "${NEW_STACK}" \
+            --change-set-name "${CHANGESET_NAME}" \
+            --region          "${REGION}" \
+            --query 'StatusReason' --output text 2>/dev/null || echo "unknown")
+          echo ""
+          echo "  [FAIL] IMPORT changeset FAILED for '${NEW_STACK}'"
+          echo "     Reason: ${CS_REASON}"
+          echo "     Hints:"
+          echo "       - Verify the resource exists in AWS with the given identifier"
+          echo "       - Check DeletionPolicy: Retain is set in the EXISTING template"
+          echo "       - Some resource types do not support CFN import (e.g. AWS::EC2::Route)"
+          echo "         If so, remove that resource from import-config.json and let CFN create it"
+          echo ""
+          exit 1 ;;
+        CREATE_IN_PROGRESS)
+          echo "  |  [WAIT] Changeset creating... (${WAITED}s)"
+          sleep 10
+          WAITED=$((WAITED + 10))
+          if [ "${WAITED}" -ge 300 ]; then
+            echo "  [FAIL] Timed out waiting for changeset to be ready"
+            exit 1
+          fi ;;
+        *)
+          echo "  |  [WAIT] Changeset status: ${CS_STATUS} (${WAITED}s)"
+          sleep 10
+          WAITED=$((WAITED + 10)) ;;
+      esac
+    done
 
     echo "  |  Executing import changeset..."
     aws cloudformation execute-change-set \
-      --stack-name      "${STACK}" \
+      --stack-name      "${NEW_STACK}" \
       --change-set-name "${CHANGESET_NAME}" \
       --region          "${REGION}"
 
-    echo "  |  Waiting for stack to reach CREATE_COMPLETE..."
-    aws cloudformation wait stack-create-complete \
-      --stack-name "${STACK}" \
-      --region     "${REGION}"
+    echo "  |  Waiting for stack IMPORT_COMPLETE..."
+    WAITED=0
+    while true; do
+      STACK_STATUS=$(aws cloudformation describe-stacks \
+        --stack-name "${NEW_STACK}" --region "${REGION}" \
+        --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+      case "${STACK_STATUS}" in
+        IMPORT_COMPLETE)
+          echo "  |  [OK] ${NEW_STACK} imported (IMPORT_COMPLETE)"
+          break ;;
+        IMPORT_ROLLBACK_COMPLETE|IMPORT_ROLLBACK_FAILED|ROLLBACK_COMPLETE|CREATE_FAILED)
+          echo "  [FAIL] Stack import failed: ${STACK_STATUS}"
+          echo "     Check CloudFormation console for '${NEW_STACK}' events."
+          exit 1 ;;
+        IMPORT_IN_PROGRESS|CREATE_IN_PROGRESS)
+          echo "  |  [WAIT] ${STACK_STATUS} (${WAITED}s)..."
+          sleep 15
+          WAITED=$((WAITED + 15))
+          if [ "${WAITED}" -ge 600 ]; then
+            echo "  [FAIL] Timed out waiting for import to complete"
+            exit 1
+          fi ;;
+        *)
+          echo "  |  [WAIT] ${STACK_STATUS} (${WAITED}s)..."
+          sleep 15
+          WAITED=$((WAITED + 15)) ;;
+      esac
+    done
 
-    echo "     [OK] ${STACK} imported [ModuleVersion=${VERSION}]"
+    echo "     [OK] ${NEW_STACK} [ModuleVersion=${VERSION}]"
 
   else
-    echo "  +- Step C: Deploying from master template [ModuleVersion=${VERSION}]..."
+    # Deploy path: no import-config.json, or no pre-resolved import file.
+    echo "  +- Step D: Deploying from master template [ModuleVersion=${VERSION}]..."
     # shellcheck disable=SC2086
     aws cloudformation deploy \
-      --stack-name        "${STACK}" \
+      --stack-name        "${NEW_STACK}" \
       --template-file     "${TEMPLATE}" \
       --parameter-overrides "file://${RESOLVED}" \
       --tags POCStage=new Account="${ACCOUNT}" \
@@ -360,10 +497,10 @@ print(json.dumps(result))
       --region "${REGION}" \
       --no-fail-on-empty-changeset \
       ${EXTRA_CAPS}
-    echo "     [OK] ${STACK}  [ModuleVersion=${VERSION}]"
+    echo "     [OK] ${NEW_STACK}  [ModuleVersion=${VERSION}]"
   fi
 
-  DEPLOYED+=("${STACK}")
+  DEPLOYED+=("${NEW_STACK}")
   echo ""
 
 done

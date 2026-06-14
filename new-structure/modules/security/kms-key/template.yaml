@@ -57,9 +57,9 @@ Parameters:
   KeyAliasName:
     Type: String
     Description: >-
-      Full alias name for this key (e.g. alias/tesco-ims-dev-platform-new).
-      Must be unique within the account. The new-structure stack uses a
-      -new suffix to coexist with the existing-structure stack during migration.
+      Full alias name for this key (e.g. alias/tesco-ims-dev-platform).
+      Must match the alias in the EXISTING stack exactly -- this value is
+      used to import the alias into the NEW stack without recreating it.
       Supplied per-account via accounts/{account}/security/kms-key.json.
 
 Resources:

@@ -93,11 +93,6 @@ Resources:
 
   S3BucketPolicy:
     Type: AWS::S3::BucketPolicy
-    # DeletionPolicy: Retain -- the VPC-only deny in this policy blocks
-    # s3:DeleteBucketPolicy from GitHub Actions (outside the VPC).
-    # Retaining avoids DELETE_FAILED on rollback or stack teardown.
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
     DependsOn: S3Bucket
     Properties:
       Bucket: !Ref S3Bucket
@@ -112,7 +107,6 @@ Resources:
             Resource:
               - !GetAtt S3Bucket.Arn
               - !Sub '${S3Bucket.Arn}/*'
-
           - Sid: WriterAccess
             Effect: Allow
             Principal:
@@ -125,7 +119,6 @@ Resources:
             Resource:
               - !GetAtt S3Bucket.Arn
               - !Sub '${S3Bucket.Arn}/*'
-
           - Sid: DenyNonVpcAccess
             Effect: Deny
             Principal: "*"
@@ -137,6 +130,7 @@ Resources:
               StringNotEquals:
                 aws:SourceVpc:
                   Fn::ImportValue: !Sub "${VpcStackName}-VpcId"
+                aws:PrincipalAccount: !Ref AccountId
 
 
 Outputs:

@@ -156,6 +156,31 @@ class TestCfnLint:
         assert "VpcId" in content, "VPC template must export VpcId"
         assert "Export:" in content
 
+    def _validate_import_config_schema(self, import_cfg_path):
+        """Validate an import-config.json uses the new Identifiers array schema."""
+        cfg = json.loads(import_cfg_path.read_text())
+        assert "resources_to_import" in cfg, \
+            f"{import_cfg_path.name}: must have 'resources_to_import'"
+        assert len(cfg["resources_to_import"]) > 0, \
+            f"{import_cfg_path.name}: resources_to_import must not be empty"
+        for entry in cfg["resources_to_import"]:
+            assert "ResourceType" in entry, \
+                f"{import_cfg_path.name}: entry missing ResourceType"
+            assert "LogicalResourceId" in entry, \
+                f"{import_cfg_path.name}: entry missing LogicalResourceId"
+            assert "Identifiers" in entry, \
+                f"{import_cfg_path.name}: entry missing Identifiers array (new schema)"
+            assert isinstance(entry["Identifiers"], list), \
+                f"{import_cfg_path.name}: Identifiers must be a list"
+            for id_spec in entry["Identifiers"]:
+                assert "Key" in id_spec, \
+                    f"{import_cfg_path.name}: identifier spec missing 'Key'"
+                assert "Source" in id_spec, \
+                    f"{import_cfg_path.name}: identifier spec missing 'Source'"
+                assert id_spec["Source"] in ("stack-resource", "param", "literal"), \
+                    f"{import_cfg_path.name}: unknown Source '{id_spec['Source']}'"
+        return cfg
+
     def test_s3_module_has_import_config(self):
         """
         S3 bucket is globally unique and cannot be recreated alongside an existing stack.
@@ -166,12 +191,52 @@ class TestCfnLint:
         assert import_cfg.exists(), \
             "S3 module is missing import-config.json. Stage 2 requires it to use " \
             "--change-set-type IMPORT and avoid S3 bucket name collision."
-        cfg = json.loads(import_cfg.read_text())
-        assert "resources_to_import" in cfg, "import-config.json must have resources_to_import"
-        assert len(cfg["resources_to_import"]) > 0, "resources_to_import must not be empty"
+        cfg = self._validate_import_config_schema(import_cfg)
         entry = cfg["resources_to_import"][0]
         assert entry["ResourceType"] == "AWS::S3::Bucket"
         assert entry["LogicalResourceId"] == "S3Bucket"
+        # S3 bucket name is resolved from params (bucket name is known up front)
+        assert any(i["Source"] == "param" for i in entry["Identifiers"]), \
+            "S3 import-config should use Source=param for BucketName"
+
+    def test_vpc_module_has_import_config(self):
+        """
+        VPC baseline module must have import-config.json covering all 11 EC2 resources.
+        The CFN Import approach moves VPC ownership from EXISTING to NEW stack without
+        recreating any resources.
+        """
+        import_cfg = MODULES_DIR / "networking" / "vpc-baseline" / "import-config.json"
+        assert import_cfg.exists(), \
+            "VPC module is missing import-config.json. Stage 2 requires it to use " \
+            "--change-set-type IMPORT to transfer VPC ownership."
+        cfg = self._validate_import_config_schema(import_cfg)
+        logical_ids = {e["LogicalResourceId"] for e in cfg["resources_to_import"]}
+        expected = {
+            "VPC", "InternetGateway", "GatewayAttachment",
+            "PublicSubnetA", "PublicSubnetB", "PrivateSubnetA", "PrivateSubnetB",
+            "PublicRouteTable", "PublicRoute",
+            "PublicSubnetAAssoc", "PublicSubnetBAssoc",
+        }
+        missing = expected - logical_ids
+        assert not missing, \
+            f"VPC import-config.json is missing resources: {missing}"
+
+    def test_kms_module_has_import_config(self):
+        """
+        KMS key module must have import-config.json for both KMSKey and KMSAlias.
+        Both resources are retained when EXISTING stack is deleted, then imported
+        into the NEW stack so the key ARN and alias remain identical.
+        """
+        import_cfg = MODULES_DIR / "security" / "kms-key" / "import-config.json"
+        assert import_cfg.exists(), \
+            "KMS module is missing import-config.json. Stage 2 requires it to use " \
+            "--change-set-type IMPORT to transfer KMS key ownership."
+        cfg = self._validate_import_config_schema(import_cfg)
+        logical_ids = {e["LogicalResourceId"] for e in cfg["resources_to_import"]}
+        assert "KMSKey" in logical_ids, \
+            "KMS import-config.json must include KMSKey"
+        assert "KMSAlias" in logical_ids, \
+            "KMS import-config.json must include KMSAlias"
 
     def test_critical_new_resources_have_deletion_policy_retain(self):
         """
@@ -181,9 +246,16 @@ class TestCfnLint:
         being imported via --change-set-type IMPORT.
         """
         must_retain = {
-            "networking/vpc-baseline": ["AWS::EC2::VPC", "AWS::EC2::Subnet",
-                                        "AWS::EC2::InternetGateway", "AWS::EC2::RouteTable"],
-            "security/kms-key":        ["AWS::KMS::Key"],
+            "networking/vpc-baseline": [
+                "AWS::EC2::VPC",
+                "AWS::EC2::Subnet",
+                "AWS::EC2::InternetGateway",
+                "AWS::EC2::RouteTable",
+                "AWS::EC2::VPCGatewayAttachment",
+                "AWS::EC2::Route",
+                "AWS::EC2::SubnetRouteTableAssociation",
+            ],
+            "security/kms-key":        ["AWS::KMS::Key", "AWS::KMS::Alias"],
             "shared-services/s3-bucket": ["AWS::S3::Bucket"],
         }
         for module_path, resource_types in must_retain.items():
