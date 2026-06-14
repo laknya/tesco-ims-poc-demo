@@ -52,17 +52,18 @@ while IFS= read -r domain_module; do
     --stack-name "${STACK}" --region "${REGION}" \
     --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
 
-  # If the EXISTING stack is in DELETE_FAILED (left over from a previous stage2 run),
-  # force-clear the stuck stack with --retain-resources so the resource stays in AWS,
-  # then continue -- stage2 will import it.
-  if [ "${STACK_STATUS}" = "DELETE_FAILED" ]; then
-    echo "  [WARN] '${STACK}' is in DELETE_FAILED (left by a previous stage2 run)."
-    echo "  Force-clearing stuck stack -- resource is retained in AWS."
+  # Stuck stacks: DELETE_FAILED, ROLLBACK_COMPLETE, CREATE_FAILED.
+  # All three block further deploys but resources may still exist in AWS
+  # (DeletionPolicy: Retain on rollback; --retain-resources on DELETE_FAILED).
+  # Delete the stuck stack so the import-check path below can re-adopt the resources.
+  if [ "${STACK_STATUS}" = "DELETE_FAILED" ] \
+  || [ "${STACK_STATUS}" = "ROLLBACK_COMPLETE" ] \
+  || [ "${STACK_STATUS}" = "CREATE_FAILED" ]; then
+    echo "  [WARN] '${STACK}' is in ${STACK_STATUS} -- clearing stuck stack."
+    echo "  AWS resources are retained (DeletionPolicy: Retain). Will re-import below."
     cfn_delete_stack_robust "${STACK}" "${REGION}" "  "
-    echo "  [OK] ${STACK} -- cleared. Stage2 import path will own this resource."
-    DEPLOYED+=("${STACK} (cleared -- import path)")
-    echo ""
-    continue
+    STACK_STATUS="DOES_NOT_EXIST"
+    echo "  [OK] Stuck stack cleared."
   fi
 
   # Detect whether this template creates IAM resources (requires capabilities).
