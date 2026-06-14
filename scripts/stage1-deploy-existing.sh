@@ -46,6 +46,27 @@ while IFS= read -r domain_module; do
   echo "    template : ${TEMPLATE}"
   echo "    params   : ${PARAMS}"
 
+  # If this module uses CFN Resource Import (e.g. s3-bucket) and the EXISTING
+  # stack is in DELETE_FAILED (left over from a previous stage2 run that tried
+  # to release it), a plain deploy would create a changeset that EarlyValidation
+  # rejects because the bucket name already exists in AWS (it was retained).
+  # Fix: force-clear the stuck stack with --retain-resources so the resource
+  # stays in AWS, then skip the re-deploy -- stage2 will import it.
+  IMPORT_CONFIG="new-structure/modules/${DOMAIN}/${MODULE}/import-config.json"
+  STACK_STATUS=$(aws cloudformation describe-stacks \
+    --stack-name "${STACK}" --region "${REGION}" \
+    --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+
+  if [ -f "${IMPORT_CONFIG}" ] && [ "${STACK_STATUS}" = "DELETE_FAILED" ]; then
+    echo "  [WARN] '${STACK}' is in DELETE_FAILED (left by a previous stage2 run)."
+    echo "  Force-clearing stuck stack -- resource is retained in AWS."
+    cfn_delete_stack_robust "${STACK}" "${REGION}" "  "
+    echo "  [OK] ${STACK} -- cleared. Stage2 import path will own this resource."
+    DEPLOYED+=("${STACK} (cleared -- import path)")
+    echo ""
+    continue
+  fi
+
   # Detect whether this template creates IAM resources (requires capabilities).
   # Generic check: any AWS::IAM:: resource type triggers CAPABILITY_NAMED_IAM.
   EXTRA_CAPS=""
