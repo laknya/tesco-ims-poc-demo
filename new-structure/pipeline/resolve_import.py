@@ -52,8 +52,10 @@ def _tag_filter(stack_name, logical_id):
     ]
 
 
-def _lookup_ec2_by_tag(resource_type, stack_name, logical_id, ec2):
+def _lookup_ec2_by_tag(resource_type, stack_name, logical_id, ec2, stack_cache=None):
     """Return the physical resource ID for an EC2 resource using CFN tags."""
+    if stack_cache is None:
+        stack_cache = {}
     filters = _tag_filter(stack_name, logical_id)
     try:
         if resource_type == "AWS::EC2::VPC":
@@ -82,15 +84,33 @@ def _lookup_ec2_by_tag(resource_type, stack_name, logical_id, ec2):
 
         elif resource_type == "AWS::EC2::SubnetRouteTableAssociation":
             # Physical ID in CFN is the association ID (rtbassoc-xxx).
-            # The association lives on the route table -- find by tag on the assoc.
+            # Subnet-route-table associations are NOT independently taggable in EC2,
+            # so CFN tags cannot locate them. Instead, derive the subnet this
+            # association maps from its logical id (e.g. PublicSubnetAAssoc ->
+            # PublicSubnetA, already resolved in stack_cache), then query the live
+            # association id for that subnet.
+            subnet_id = None
+            best_match = ""
+            for cached_logical, cached_physical in stack_cache.items():
+                if (str(cached_physical).startswith("subnet-")
+                        and logical_id.startswith(cached_logical)
+                        and len(cached_logical) > len(best_match)):
+                    best_match = cached_logical
+                    subnet_id = cached_physical
+            if not subnet_id:
+                print(f"    [WARN] Cannot derive subnet for association '{logical_id}' "
+                      f"-- the subnet must be resolved before its association.",
+                      file=sys.stderr)
+                return None
             r = ec2.describe_route_tables(
-                Filters=[{"Name": "tag:aws:cloudformation:stack-name", "Values": [stack_name]}]
+                Filters=[{"Name": "association.subnet-id", "Values": [subnet_id]}]
             )
             for rt in r.get("RouteTables", []):
                 for assoc in rt.get("Associations", []):
-                    tags = {t["Key"]: t["Value"] for t in assoc.get("Tags", [])}
-                    if tags.get("aws:cloudformation:logical-id") == logical_id:
+                    if assoc.get("SubnetId") == subnet_id:
                         return assoc["RouteTableAssociationId"]
+            print(f"    [WARN] No live route-table association found for subnet "
+                  f"{subnet_id} ('{logical_id}').", file=sys.stderr)
 
         elif resource_type == "AWS::EC2::Route":
             # Route physical ID in CFN is "rtb-xxx|0.0.0.0/0".
@@ -203,7 +223,7 @@ def lookup_by_cfn_tag(resource_type, stack_name, logical_id, region, params, sta
         stack_cache = {}
     if resource_type.startswith("AWS::EC2::"):
         ec2 = boto3.client("ec2", region_name=region)
-        return _lookup_ec2_by_tag(resource_type, stack_name, logical_id, ec2)
+        return _lookup_ec2_by_tag(resource_type, stack_name, logical_id, ec2, stack_cache)
     elif resource_type.startswith("AWS::KMS::"):
         kms = boto3.client("kms", region_name=region)
         return _lookup_kms_by_tag(resource_type, stack_name, logical_id, kms, params, stack_cache)
