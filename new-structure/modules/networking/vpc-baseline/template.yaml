@@ -93,13 +93,16 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
 
-  GatewayAttachment:
-    Type: AWS::EC2::VPCGatewayAttachment
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      VpcId: !Ref VPC
-      InternetGatewayId: !Ref InternetGateway
+  # ---------------------------------------------------------------------------
+  # GatewayAttachment (IGW <-> VPC) is INTENTIONALLY NOT MANAGED here.
+  #
+  # AWS::EC2::VPCGatewayAttachment uses AttachmentType as a primaryIdentifier
+  # but it is a readOnlyProperty -- AWS sets its value internally and does not
+  # expose it via any EC2 API call, making the correct import identifier
+  # undiscoverable at migration time. Option A: the attachment is RETAINED on
+  # the EXISTING stack (DeletionPolicy: Retain) and omitted here. The physical
+  # IGW-to-VPC attachment persists in AWS regardless of stack ownership.
+  # ---------------------------------------------------------------------------
 
   PublicSubnetA:
     Type: AWS::EC2::Subnet

@@ -201,10 +201,10 @@ class TestCfnLint:
 
     def test_vpc_module_has_import_config(self):
         """
-        VPC baseline module must have import-config.json covering the 10 importable EC2
-        resources. AWS::EC2::Route is intentionally excluded -- CFN Resource Import does
-        not support that resource type; the route is created fresh by the NEW stack after
-        the route table is imported.
+        VPC baseline module must have import-config.json covering the 9 importable EC2
+        resources. AWS::EC2::Route and AWS::EC2::VPCGatewayAttachment are intentionally
+        excluded (Option A): CFN Resource Import cannot reliably import them so both are
+        retained on the EXISTING stack and omitted from the NEW template.
         """
         import_cfg = MODULES_DIR / "networking" / "vpc-baseline" / "import-config.json"
         assert import_cfg.exists(), \
@@ -213,7 +213,7 @@ class TestCfnLint:
         cfg = self._validate_import_config_schema(import_cfg)
         logical_ids = {e["LogicalResourceId"] for e in cfg["resources_to_import"]}
         expected = {
-            "VPC", "InternetGateway", "GatewayAttachment",
+            "VPC", "InternetGateway",
             "PublicSubnetA", "PublicSubnetB", "PrivateSubnetA", "PrivateSubnetB",
             "PublicRouteTable",
             "PublicSubnetAAssoc", "PublicSubnetBAssoc",
@@ -223,6 +223,8 @@ class TestCfnLint:
             f"VPC import-config.json is missing resources: {missing}"
         assert "PublicRoute" not in logical_ids, \
             "PublicRoute (AWS::EC2::Route) must NOT be in import-config -- CFN cannot import this resource type"
+        assert "GatewayAttachment" not in logical_ids, \
+            "GatewayAttachment (AWS::EC2::VPCGatewayAttachment) must NOT be in import-config -- AttachmentType primaryIdentifier is a readOnlyProperty with opaque internal value (Option A)"
 
     def test_kms_module_has_import_config(self):
         """
@@ -258,7 +260,7 @@ class TestCfnLint:
                 "AWS::EC2::Subnet",
                 "AWS::EC2::InternetGateway",
                 "AWS::EC2::RouteTable",
-                "AWS::EC2::VPCGatewayAttachment",
+                # AWS::EC2::VPCGatewayAttachment is Option A (omitted from NEW template)
                 "AWS::EC2::SubnetRouteTableAssociation",
             ],
             "security/kms-key":        ["AWS::KMS::Key", "AWS::KMS::Alias"],
@@ -339,37 +341,53 @@ class TestCfnLint:
         assert not error_lines, \
             f"{module_path}: filtered template has cfn-lint errors:\n{lint.stdout}"
 
-    def test_route_is_option_a_retained_in_existing_unmanaged_in_new(self):
+    def test_non_importable_resources_are_option_a(self):
         """
-        Option A (zero-disruption) handling of AWS::EC2::Route:
-          - EXISTING template: the route is RETAINED (DeletionPolicy: Retain) so it
-            is never deleted during migration -- no traffic gap.
-          - NEW template: the route is OMITTED entirely (adopted but unmanaged), so
-            Phase 2 never tries to delete/recreate it.
+        Option A (zero-disruption) handling of non-importable EC2 resources:
+          AWS::EC2::Route -- CFN import does not support this type.
+          AWS::EC2::VPCGatewayAttachment -- AttachmentType primaryIdentifier is a
+            readOnlyProperty with an opaque internal value, making the correct import
+            identifier undiscoverable.
+        For each:
+          - EXISTING template: resource is RETAINED (DeletionPolicy: Retain) so it is
+            never deleted during migration.
+          - NEW template: resource is OMITTED entirely (adopted but unmanaged).
         """
         existing = EXISTING_DIR / "dev" / "networking__vpc-baseline-template.yaml"
         new = MODULES_DIR / "networking" / "vpc-baseline" / "template.yaml"
-
-        def _is_route_line(line):
-            # Exact match for AWS::EC2::Route -- must NOT match AWS::EC2::RouteTable.
-            return line.strip() == "Type: AWS::EC2::Route"
-
-        # EXISTING: the route block must carry DeletionPolicy: Retain.
         ex_lines = existing.read_text().splitlines()
+        new_lines = new.read_text().splitlines()
+
+        def _is_type_line(line, rtype):
+            return line.strip() == f"Type: {rtype}"
+
+        # --- AWS::EC2::Route ---
         found_route = False
         for i, line in enumerate(ex_lines):
-            if _is_route_line(line):
+            if _is_type_line(line, "AWS::EC2::Route"):
                 found_route = True
                 block = "\n".join(ex_lines[i:i + 4])
                 assert "DeletionPolicy: Retain" in block, \
                     (f"{existing.relative_to(REPO_ROOT)}: AWS::EC2::Route must be RETAINED "
-                     f"(Option A) so it survives the EXISTING stack deletion without a gap.")
+                     f"(Option A) so it survives the EXISTING stack deletion without a traffic gap.")
         assert found_route, "EXISTING VPC template should still define PublicRoute"
-
-        # NEW: no AWS::EC2::Route resource at all (the route table is still allowed).
-        assert not any(_is_route_line(line) for line in new.read_text().splitlines()), \
+        assert not any(_is_type_line(l, "AWS::EC2::Route") for l in new_lines), \
             (f"{new.relative_to(REPO_ROOT)}: NEW template must NOT manage AWS::EC2::Route "
-             f"(Option A: adopted-but-unmanaged to avoid any traffic disruption).")
+             f"(Option A: adopted-but-unmanaged).")
+
+        # --- AWS::EC2::VPCGatewayAttachment ---
+        found_attachment = False
+        for i, line in enumerate(ex_lines):
+            if _is_type_line(line, "AWS::EC2::VPCGatewayAttachment"):
+                found_attachment = True
+                block = "\n".join(ex_lines[i:i + 4])
+                assert "DeletionPolicy: Retain" in block, \
+                    (f"{existing.relative_to(REPO_ROOT)}: AWS::EC2::VPCGatewayAttachment must be "
+                     f"RETAINED (Option A) -- AttachmentType identifier is opaque.")
+        assert found_attachment, "EXISTING VPC template should still define GatewayAttachment"
+        assert not any(_is_type_line(l, "AWS::EC2::VPCGatewayAttachment") for l in new_lines), \
+            (f"{new.relative_to(REPO_ROOT)}: NEW template must NOT manage AWS::EC2::VPCGatewayAttachment "
+             f"(Option A: adopted-but-unmanaged).")
 
 
 # -- JSON config syntax --------------------------------------------------------

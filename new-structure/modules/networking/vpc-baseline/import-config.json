@@ -1,6 +1,6 @@
 {
   "migration_type": "import",
-  "description": "VPC baseline: 10 EC2 resources imported from the EXISTING stack. AWS::EC2::Route is NOT CFN-importable -- it is created fresh by the NEW stack after the route table is imported. Physical IDs are resolved via describe-stack-resource before the EXISTING stack is deleted.",
+  "description": "VPC baseline: 9 EC2 resources imported from the EXISTING stack. AWS::EC2::Route and AWS::EC2::VPCGatewayAttachment are NOT CFN-importable (AttachmentType is a readOnlyProperty with an opaque internal value). Both are handled via Option A: retained on EXISTING with DeletionPolicy: Retain, omitted from NEW template. Physical IDs are resolved via describe-stack-resource before the EXISTING stack is deleted.",
   "resources_to_import": [
     {
       "ResourceType": "AWS::EC2::VPC",
@@ -14,14 +14,6 @@
       "LogicalResourceId": "InternetGateway",
       "Identifiers": [
         {"Key": "InternetGatewayId", "Source": "stack-resource", "StackLogicalId": "InternetGateway"}
-      ]
-    },
-    {
-      "ResourceType": "AWS::EC2::VPCGatewayAttachment",
-      "LogicalResourceId": "GatewayAttachment",
-      "Identifiers": [
-        {"Key": "VpcId", "Source": "stack-resource", "StackLogicalId": "VPC"},
-        {"Key": "AttachmentType", "Source": "literal", "Value": "internet-gateway"}
       ]
     },
     {
