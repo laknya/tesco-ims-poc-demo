@@ -105,7 +105,11 @@ REVIEW_IN_PROGRESS)
       continue
     fi
 
-    # Attempt to find retained resources via CFN tags
+    # Attempt to find retained resources via CFN tags.
+    # --validate confirms each resolved resource ACTUALLY EXISTS in AWS. This is
+    # essential for param-sourced resources (e.g. the S3 bucket name comes from
+    # params and would otherwise "resolve" even if the bucket was deleted). If a
+    # resource is gone, resolve fails and we fall back to a fresh deploy (create).
     IMPORT_FILE="/tmp/tesco-ims-stage1-${ACCOUNT}-${DOMAIN}-${MODULE}.json"
     echo "  ${domain_module}: EXISTING stack absent -- checking for retained resources via tags..."
 
@@ -116,10 +120,12 @@ REVIEW_IN_PROGRESS)
       --params     "${PARAMS}" \
       --region     "${REGION}" \
       --output     "${IMPORT_FILE}" \
-      --fallback-by-tag 2>"${RESOLVE_STDERR}" && RESOLVE_OK=true || RESOLVE_OK=false
-    if [ "${RESOLVE_OK}" = "false" ] && [ -s "${RESOLVE_STDERR}" ]; then
-      echo "  [DEBUG] resolve_import errors:"
-      cat "${RESOLVE_STDERR}"
+      --fallback-by-tag \
+      --validate 2>"${RESOLVE_STDERR}" && RESOLVE_OK=true || RESOLVE_OK=false
+    if [ "${RESOLVE_OK}" = "false" ]; then
+      # Not an error -- resources are gone, so we will create them fresh below.
+      [ -s "${RESOLVE_STDERR}" ] && { echo "  [INFO] no retained resources to import:"; cat "${RESOLVE_STDERR}"; }
+      rm -f "${IMPORT_FILE}"
     fi
     rm -f "${RESOLVE_STDERR}"
 
