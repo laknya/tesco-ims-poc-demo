@@ -291,6 +291,7 @@ cfn_import_then_update() {
         --no-fail-on-empty-changeset \
         ${extra_caps}; then
     echo "${prefix}[FAIL] Phase 2 deploy failed for '${stack}'."
+    _cfn_dump_failures "${stack}" "${region}" "${prefix}"
     rm -f "${import_template}" "${actions_file}"
     return 1
   fi
@@ -298,6 +299,18 @@ cfn_import_then_update() {
   echo "${prefix}[OK] Phase 2 complete -- '${stack}' fully reconciled to template."
   rm -f "${import_template}" "${actions_file}"
   return 0
+}
+
+# Internal: print the actual resource-level failure reasons for a stack.
+# Surfaces the root cause inline instead of telling the operator to run a command.
+_cfn_dump_failures() {
+  local stack="$1" region="$2" prefix="${3:-  }"
+  echo "${prefix}---- failed resource events for '${stack}' ----"
+  aws cloudformation describe-stack-events \
+    --stack-name "${stack}" --region "${region}" \
+    --query "StackEvents[?contains(ResourceStatus, 'FAILED')].[LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
+    --output text 2>/dev/null | head -20 | sed "s/^/${prefix}  /"
+  echo "${prefix}-----------------------------------------------"
 }
 
 # Internal: wait for a change set to reach CREATE_COMPLETE. Returns non-zero on FAILED.
