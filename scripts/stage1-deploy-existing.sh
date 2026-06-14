@@ -74,44 +74,12 @@ REVIEW_IN_PROGRESS)
       ;;
   esac
 
-  # For modules with import-config.json that appear healthy (CREATE_COMPLETE etc.),
-  # verify the stack actually owns its key resource. If the first resource in
-  # import-config is NOT owned by the stack (e.g. was retained by a prior run and
-  # never re-imported), delete and re-import rather than letting the deploy fail
-  # with EarlyValidation.
-  if [ -f "${IMPORT_CONFIG}" ] && [ "${STACK_STATUS}" != "DOES_NOT_EXIST" ]; then
-    FIRST_LOGICAL_ID=$(python3 -c "
-import json, sys
-try:
-    cfg = json.load(open('${IMPORT_CONFIG}'))
-    rs = cfg.get('resources_to_import', [])
-    print(rs[0]['LogicalResourceId'] if rs else '')
-except Exception:
-    pass
-" 2>/dev/null)
-    if [ -n "${FIRST_LOGICAL_ID}" ]; then
-      OWN_STDERR=$(mktemp)
-      RES_STATUS=$(aws cloudformation describe-stack-resource \
-        --stack-name "${STACK}" --region "${REGION}" \
-        --logical-resource-id "${FIRST_LOGICAL_ID}" \
-        --query 'StackResourceDetail.ResourceStatus' --output text 2>"${OWN_STDERR}" \
-        || echo "LOOKUP_FAILED")
-      OWN_ERR=$(cat "${OWN_STDERR}"); rm -f "${OWN_STDERR}"
-
-      if echo "${OWN_ERR}" | grep -qi "AccessDenied\|not authorized"; then
-        # Cannot verify ownership due to missing cloudformation:DescribeStackResource.
-        # Do NOT delete the stack -- assume it owns its resources and proceed normally.
-        echo "  [WARN] Cannot verify resource ownership (AccessDenied on DescribeStackResource)."
-        echo "  Skipping ownership check. Add cloudformation:DescribeStackResource to the deploy role."
-      elif [ "${RES_STATUS}" = "LOOKUP_FAILED" ]; then
-        echo "  [WARN] '${STACK}' (${STACK_STATUS}) does not own '${FIRST_LOGICAL_ID}'."
-        echo "  Resource exists in AWS but not in this stack. Clearing to re-import."
-        cfn_delete_stack_robust "${STACK}" "${REGION}" "  "
-        STACK_STATUS="DOES_NOT_EXIST"
-        echo "  [OK] Stack cleared -- import path will re-adopt resource."
-      fi
-    fi
-  fi
+  # NOTE: a CREATE_COMPLETE / UPDATE_COMPLETE / IMPORT_COMPLETE EXISTING stack is
+  # trusted to own its resources -- CloudFormation guarantees this. We deliberately
+  # do NOT probe individual resource ownership here: that probe required
+  # cloudformation:DescribeStackResource (often not granted) and any lookup error
+  # would otherwise be misread as "not owned", deleting a healthy stack. Healthy
+  # stacks fall through to the no-op deploy below.
 
   # Detect whether this template creates IAM resources (requires capabilities).
   # Generic check: any AWS::IAM:: resource type triggers CAPABILITY_NAMED_IAM.
