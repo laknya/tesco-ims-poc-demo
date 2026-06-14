@@ -323,6 +323,12 @@ class TestCfnLint:
             (f"{module_path}: filtered template resources {produced} "
              f"!= import-config resources {expected}")
 
+        # A CFN IMPORT change set cannot add Outputs -- the filtered template
+        # must have NO Outputs section (Phase 2 re-adds them).
+        assert "Outputs:" not in out_template.read_text(), \
+            (f"{module_path}: filtered import template must NOT contain Outputs "
+             f"(CFN rejects 'modify or add [Outputs]' during import).")
+
         # cfn-lint: tolerate warnings (exit 4), fail only on errors (exit 2 / contains 'E')
         lint = cfn_lint(str(out_template))
         error_lines = [ln for ln in lint.stdout.splitlines() if ln.strip().startswith("E")]

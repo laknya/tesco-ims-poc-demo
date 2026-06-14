@@ -94,25 +94,8 @@ _CfnDumper.add_representer(CfnTag, _cfn_representer)
 
 
 # ---------------------------------------------------------------------------
-# Reference detection -- does a node reference any of the dropped logical IDs?
+# DependsOn cleanup
 # ---------------------------------------------------------------------------
-
-def _references_dropped(node, dropped):
-    if isinstance(node, CfnTag):
-        if node.tag == "!Ref" and isinstance(node.value, str) and node.value in dropped:
-            return True
-        if node.tag == "!GetAtt":
-            if isinstance(node.value, str) and node.value.split(".")[0] in dropped:
-                return True
-            if isinstance(node.value, list) and node.value and node.value[0] in dropped:
-                return True
-        return _references_dropped(node.value, dropped)
-    if isinstance(node, dict):
-        return any(_references_dropped(v, dropped) for v in node.values())
-    if isinstance(node, list):
-        return any(_references_dropped(v, dropped) for v in node)
-    return False
-
 
 def _clean_depends_on(resource, dropped):
     """Remove DependsOn entries that point at dropped resources."""
@@ -180,17 +163,12 @@ def main():
     for res in template["Resources"].values():
         _clean_depends_on(res, dropped)
 
-    # Drop Outputs that reference any dropped resource.
-    outputs = template.get("Outputs")
-    if isinstance(outputs, dict):
-        kept_outputs = {
-            name: body for name, body in outputs.items()
-            if not _references_dropped(body, dropped)
-        }
-        if kept_outputs:
-            template["Outputs"] = kept_outputs
-        else:
-            template.pop("Outputs", None)
+    # Drop the ENTIRE Outputs section. A CFN IMPORT change set cannot add or
+    # modify Outputs ("you cannot modify or add [Outputs]") -- the import template
+    # must contain only the resources being imported. Phase 2 (full-template
+    # deploy) re-adds all Outputs/Exports after the resources are adopted.
+    had_outputs = "Outputs" in template
+    template.pop("Outputs", None)
 
     with open(args.output, "w") as fh:
         yaml.dump(template, fh, Dumper=_CfnDumper, sort_keys=False, default_flow_style=False)
@@ -204,6 +182,9 @@ def main():
     if dropped:
         print(f"[generate_import_template] dropped {len(dropped)} non-importable "
               f"resource(s) (created fresh in Phase 2): {sorted(dropped)}")
+    if had_outputs:
+        print(f"[generate_import_template] stripped Outputs section "
+              f"(re-added in Phase 2 -- CFN import cannot add Outputs)")
     print(f"[generate_import_template] -> {args.output}")
 
 
