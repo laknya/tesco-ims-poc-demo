@@ -107,3 +107,141 @@ discover_existing_modules() {
     echo "${domain}/${module}"
   done
 }
+
+# cfn_delete_stack_robust STACK REGION [LOG_PREFIX]
+#   Deletes a CloudFormation stack, handling DELETE_FAILED automatically.
+#
+#   If the stack is already in DELETE_FAILED (previous failed run), OR if a
+#   plain delete-stack lands in DELETE_FAILED, the function:
+#     1. Fetches the failed resource logical IDs from stack events
+#     2. Retries delete-stack --retain-resources on those IDs
+#   This is the only valid use case for --retain-resources (DELETE_FAILED state).
+#
+#   Resources with DeletionPolicy: Retain in their template are automatically
+#   retained by CloudFormation; this function handles cases where CFN cannot
+#   even reach that step (e.g. export-in-use, IAM deny, etc.).
+#
+#   Returns 0 on DELETE_COMPLETE / DOES_NOT_EXIST, non-zero on timeout.
+cfn_delete_stack_robust() {
+  local stack="$1"
+  local region="$2"
+  local prefix="${3:-  |}"
+
+  local cur_status
+  cur_status=$(aws cloudformation describe-stacks \
+    --stack-name "${stack}" --region "${region}" \
+    --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+
+  if [ "${cur_status}" = "DOES_NOT_EXIST" ]; then
+    echo "${prefix}  Stack '${stack}' does not exist -- nothing to delete"
+    return 0
+  fi
+
+  # If already in DELETE_FAILED from a previous run, go straight to retain-retry.
+  if [ "${cur_status}" = "DELETE_FAILED" ]; then
+    echo "${prefix}  [WARN] '${stack}' is in DELETE_FAILED -- retrying with --retain-resources"
+    _cfn_retain_retry "${stack}" "${region}" "${prefix}"
+    return $?
+  fi
+
+  echo "${prefix}  Deleting '${stack}'..."
+  echo "${prefix}  DeletionPolicy: Retain keeps resources in AWS -- only CFN ownership is released."
+  aws cloudformation delete-stack --stack-name "${stack}" --region "${region}"
+
+  local attempts=0
+  while true; do
+    local status
+    status=$(aws cloudformation describe-stacks \
+      --stack-name "${stack}" --region "${region}" \
+      --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+
+    case "${status}" in
+      DOES_NOT_EXIST|DELETE_COMPLETE)
+        echo "${prefix}  [OK] '${stack}' released"
+        return 0 ;;
+
+      DELETE_FAILED)
+        echo "${prefix}  [WARN] delete-stack landed in DELETE_FAILED -- checking events..."
+        # Print the specific failure reason from events for diagnosis
+        aws cloudformation describe-stack-events \
+          --stack-name "${stack}" --region "${region}" \
+          --query 'StackEvents[?ResourceStatus==`DELETE_FAILED`].[LogicalResourceId,ResourceStatusReason]' \
+          --output text 2>/dev/null | head -10 | sed "s/^/${prefix}    /"
+        _cfn_retain_retry "${stack}" "${region}" "${prefix}"
+        return $? ;;
+
+      DELETE_IN_PROGRESS)
+        sleep 10
+        attempts=$((attempts + 1))
+        if [ "${attempts}" -ge 90 ]; then
+          echo "${prefix}  [FAIL] Timed out (15 min) waiting for '${stack}' deletion"
+          return 1
+        fi ;;
+
+      *)
+        sleep 10
+        attempts=$((attempts + 1))
+        if [ "${attempts}" -ge 90 ]; then
+          echo "${prefix}  [FAIL] Unexpected status '${status}' -- timed out"
+          return 1
+        fi ;;
+    esac
+  done
+}
+
+# Internal helper: retry delete-stack --retain-resources on a DELETE_FAILED stack.
+_cfn_retain_retry() {
+  local stack="$1"
+  local region="$2"
+  local prefix="${3:-  |}"
+
+  # Collect the logical resource IDs that are in DELETE_FAILED.
+  local failed
+  failed=$(aws cloudformation describe-stack-events \
+    --stack-name "${stack}" --region "${region}" \
+    --query 'StackEvents[?ResourceStatus==`DELETE_FAILED`].LogicalResourceId' \
+    --output text 2>/dev/null | tr '\t' '\n' | sort -u | tr '\n' ' ' | sed 's/ $//')
+
+  if [ -z "${failed}" ]; then
+    # No DELETE_FAILED events found -- retain ALL resources so CFN can force through.
+    failed=$(aws cloudformation describe-stack-resources \
+      --stack-name "${stack}" --region "${region}" \
+      --query 'StackResources[].LogicalResourceId' \
+      --output text 2>/dev/null | tr '\t' ' ')
+  fi
+
+  echo "${prefix}  Retaining: ${failed}"
+  # shellcheck disable=SC2086
+  aws cloudformation delete-stack \
+    --stack-name "${stack}" \
+    --retain-resources ${failed} \
+    --region "${region}"
+
+  local attempts=0
+  while true; do
+    local status
+    status=$(aws cloudformation describe-stacks \
+      --stack-name "${stack}" --region "${region}" \
+      --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+
+    case "${status}" in
+      DOES_NOT_EXIST|DELETE_COMPLETE)
+        echo "${prefix}  [OK] '${stack}' released (retain-retry succeeded)"
+        return 0 ;;
+      DELETE_FAILED)
+        echo "${prefix}  [FAIL] Stack still in DELETE_FAILED after retain-retry"
+        echo "${prefix}  Run: aws cloudformation describe-stack-events --stack-name ${stack} --region ${region}"
+        return 1 ;;
+      DELETE_IN_PROGRESS)
+        sleep 10
+        attempts=$((attempts + 1))
+        if [ "${attempts}" -ge 60 ]; then
+          echo "${prefix}  [FAIL] Timed out waiting for retain-retry to complete"
+          return 1
+        fi ;;
+      *)
+        sleep 10
+        attempts=$((attempts + 1)) ;;
+    esac
+  done
+}

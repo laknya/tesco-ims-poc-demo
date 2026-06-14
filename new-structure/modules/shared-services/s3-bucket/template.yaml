@@ -93,10 +93,11 @@ Resources:
 
   S3BucketPolicy:
     Type: AWS::S3::BucketPolicy
-    # DependsOn is explicit here even though CloudFormation could infer it from
-    # the !Ref / !GetAtt references below.  Explicit DependsOn makes the ordering
-    # contract visible to reviewers: the bucket MUST exist before its policy can
-    # be created or updated.
+    # DeletionPolicy: Retain -- the VPC-only deny in this policy blocks
+    # s3:DeleteBucketPolicy from GitHub Actions (outside the VPC).
+    # Retaining avoids DELETE_FAILED on rollback or stack teardown.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     DependsOn: S3Bucket
     Properties:
       Bucket: !Ref S3Bucket
