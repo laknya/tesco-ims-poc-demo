@@ -64,7 +64,8 @@ while IFS= read -r domain_module; do
   # Delete the stuck stack so the import path below can re-adopt the resources.
   case "${STACK_STATUS}" in
     DELETE_FAILED|CREATE_FAILED|ROLLBACK_COMPLETE|ROLLBACK_FAILED|\
-UPDATE_ROLLBACK_FAILED|IMPORT_ROLLBACK_COMPLETE|IMPORT_ROLLBACK_FAILED|\
+UPDATE_ROLLBACK_COMPLETE|UPDATE_ROLLBACK_FAILED|\
+IMPORT_ROLLBACK_COMPLETE|IMPORT_ROLLBACK_FAILED|\
 REVIEW_IN_PROGRESS)
       echo "  [WARN] '${STACK}' is in ${STACK_STATUS} -- clearing stuck stack."
       echo "  AWS resources retained (DeletionPolicy: Retain). Will re-import below."
