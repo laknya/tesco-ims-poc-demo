@@ -376,18 +376,17 @@ class TestCfnLint:
              f"(Option A: adopted-but-unmanaged).")
 
         # --- AWS::EC2::VPCGatewayAttachment ---
-        found_attachment = False
-        for i, line in enumerate(ex_lines):
-            if _is_type_line(line, "AWS::EC2::VPCGatewayAttachment"):
-                found_attachment = True
-                block = "\n".join(ex_lines[i:i + 4])
-                assert "DeletionPolicy: Retain" in block, \
-                    (f"{existing.relative_to(REPO_ROOT)}: AWS::EC2::VPCGatewayAttachment must be "
-                     f"RETAINED (Option A) -- AttachmentType identifier is opaque.")
-        assert found_attachment, "EXISTING VPC template should still define GatewayAttachment"
+        # AttachmentType is a readOnlyProperty used as primaryIdentifier: AWS sets
+        # it internally and never exposes it via any EC2 API, so the correct import
+        # identifier is undiscoverable. The attachment also cannot be safely deleted
+        # and recreated (would drop internet connectivity). Both templates omit it
+        # entirely -- the physical attachment remains live in AWS, unmanaged by CFN.
+        assert not any(_is_type_line(l, "AWS::EC2::VPCGatewayAttachment") for l in ex_lines), \
+            (f"{existing.relative_to(REPO_ROOT)}: EXISTING template must NOT manage "
+             f"AWS::EC2::VPCGatewayAttachment -- it cannot be imported or safely recreated.")
         assert not any(_is_type_line(l, "AWS::EC2::VPCGatewayAttachment") for l in new_lines), \
-            (f"{new.relative_to(REPO_ROOT)}: NEW template must NOT manage AWS::EC2::VPCGatewayAttachment "
-             f"(Option A: adopted-but-unmanaged).")
+            (f"{new.relative_to(REPO_ROOT)}: NEW template must NOT manage "
+             f"AWS::EC2::VPCGatewayAttachment (Option A: adopted-but-unmanaged).")
 
 
 # -- JSON config syntax --------------------------------------------------------
