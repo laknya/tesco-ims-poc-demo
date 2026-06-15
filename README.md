@@ -44,6 +44,7 @@ spread across 68 accounts, and we fixed it.
 16. [Adding a New Module](#adding-a-new-module)
 17. [Adding a New Account](#adding-a-new-account)
 18. [Running Locally (No AWS Needed)](#running-locally-no-aws-needed)
+19. [Real Migration Prerequisites](#real-migration-prerequisites)
 
 ---
 
@@ -423,14 +424,31 @@ This is the main script. It transfers CloudFormation ownership from the old
 per-account stacks to the new centralized modules. Nothing gets deleted or
 recreated in AWS -- only the CFN ownership changes.
 
-It runs in four passes:
+It runs in five passes with a confirmation gate between Pass B and Pass C:
 
 ```
-Pass A  pre-flight  -- version check + cfn-lint all modules before touching AWS
-Pass B  resolve     -- read physical IDs from EXISTING stacks while they still exist
-Pass C  release     -- delete all EXISTING stacks (DeletionPolicy: Retain keeps AWS resources)
-Pass D  import      -- create NEW stacks using CFN Resource Import (two-phase)
+Pass A  pre-flight    -- version check + cfn-lint all modules (no AWS, fail fast)
+Pass 0  safety harden -- add DeletionPolicy: Retain to ALL resources in ALL EXISTING stacks
+Pass B  resolve       -- read physical IDs from EXISTING stacks while they still exist
+        |
+        +-- CONFIRMATION GATE (the real point of no return)
+        |   Local run : prints mapping summary, requires typing MIGRATE to proceed
+        |   CI run    : environment gate approval on the deploy-new job is the confirmation
+        |
+Pass C  release       -- delete all EXISTING stacks (DeletionPolicy: Retain keeps AWS resources)
+Pass D  import        -- create NEW stacks using CFN Resource Import (two-phase)
 ```
+
+Pass 0 is what makes Pass C safe. Before Stage 2 touches anything in AWS, it reads
+every EXISTING stack template, patches every resource with `DeletionPolicy: Retain`,
+and deploys the update. This is idempotent -- if Retain is already there it exits in
+seconds. In a POC environment the templates are pre-authored with Retain so Pass 0 is
+a fast no-op. In a real migration against stacks created years ago, Pass 0 is the
+critical safety step that ensures nothing is permanently destroyed.
+
+Pass C is where EXISTING stacks are deleted. This is the true cutover moment for
+CFN Import migrations -- not Stage 4. Stage 4 is a no-op for modules migrated via
+CFN Import because their EXISTING stacks are already gone after Pass C.
 
 If something goes wrong and you need to re-run, the script auto-detects stuck
 stacks (`ROLLBACK_COMPLETE`, `UPDATE_ROLLBACK_COMPLETE`, etc.), clears them while
@@ -459,19 +477,23 @@ already gone after stage 2 -- CFN ownership has been fully transferred.
 bash scripts/stage3-validate-parity.sh dev
 ```
 
-### stage4-cutover.sh -- Make the New Structure Permanent
+### stage4-cutover.sh -- Final Governance Checkpoint
 
-This retires any remaining EXISTING stacks and makes the new centralized modules
-the only source of truth. It has four safeguards so nothing gets accidentally
-deleted:
+For modules migrated via CFN Import (all three in this POC), the EXISTING stacks
+are already gone after Stage 2 Pass C. Stage 4 finds them as `DOES_NOT_EXIST`
+and skips them. It is effectively a no-op for this POC.
+
+Stage 4 is meaningful in a "deploy alongside" migration pattern where NEW stacks
+are created while EXISTING stacks are still live, and Stage 4 is the moment the
+old stacks are retired. For CFN Import, that moment is Stage 2 Pass C, which now
+has its own confirmation gate.
+
+The script still provides a formal sign-off point and runs with four safeguards:
 
 1. Only runs from `workflow_dispatch` (never triggered automatically)
 2. Requires typing `CUTOVER` as a workflow input
 3. Requires a reviewer to click Approve on the `tesco-ims-cutover` environment gate
-4. Re-runs parity checks inside the script -- any failure aborts before deleting anything
-
-For modules migrated via CFN Import, the EXISTING stacks are already gone from
-stage 2 and cutover just skips them.
+4. Re-runs parity checks inside the script before touching anything
 
 ```bash
 bash scripts/stage4-cutover.sh dev
@@ -639,9 +661,11 @@ throughout the migration.
 These properties hold everywhere in the codebase and are the reason the migration
 is safe to run and re-run:
 
-- **`DeletionPolicy: Retain` on every resource in every template.** Deleting a
-  CloudFormation stack never deletes the actual AWS resources. This is the
-  fundamental safety net.
+- **`DeletionPolicy: Retain` on every resource in every template, enforced automatically.**
+  Stage 2 Pass 0 reads every EXISTING stack live from AWS and patches any resource
+  that is missing Retain before a single destructive action is taken. Deleting a
+  CloudFormation stack never deletes the actual AWS resources. This is the fundamental
+  safety net.
 
 - **Parity must pass before cutover.** There are four confirmation layers
   (environment gate, typed input, interactive confirm, internal parity preflight)
@@ -834,9 +858,6 @@ from the retained AWS resources.
 # Install everything you need
 pip install cfn-lint boto3 pyyaml pytest jsonschema
 
-# See the problem -- lint the old per-account template
-cfn-lint existing-structure/dev/networking__vpc-baseline-template.yaml
-
 # See the solution -- lint the new shared master template
 cfn-lint new-structure/modules/networking/vpc-baseline/template.yaml
 
@@ -852,9 +873,257 @@ python3 new-structure/pipeline/resolve_parameters.py \
 # Generate account metadata from the registry
 python3 new-structure/pipeline/generate_account_params.py
 
-# Run the full test suite (195 tests, no AWS credentials needed)
-pytest tests/ -m "not aws" --tb=short -q
-
 # Run the business demo (one change propagates to all accounts)
 bash scripts/demo-one-change.sh
 ```
+
+---
+
+## Real Migration Prerequisites
+
+This section covers what you need to do before running Stage 2 against a real
+production environment. The POC demo skips most of this because the templates
+were purpose-built for it. A real migration against stacks created years ago
+requires preparation work that cannot be automated away.
+
+---
+
+### Step 1 -- Export all existing templates and parameters
+
+This is the most important thing you can do before migration day. The templates
+in `existing-structure/` are the rollback blueprint. Without them, Stage 5
+cannot reconstruct the EXISTING stacks if something goes wrong after cutover.
+
+For each account and each stack you plan to migrate:
+
+```bash
+# Export the live template from AWS
+aws cloudformation get-template \
+  --stack-name poc-EXISTING-networking-vpc-baseline-dev \
+  --query TemplateBody \
+  --output text \
+  > existing-structure/dev/networking__vpc-baseline-template.yaml
+
+# Export the current stack parameters
+aws cloudformation describe-stacks \
+  --stack-name poc-EXISTING-networking-vpc-baseline-dev \
+  --query 'Stacks[0].Parameters' \
+  --output json \
+  > existing-structure/dev/networking__vpc-baseline-params.json
+```
+
+Commit these files to the repo before migration day. Do not wait until migration
+is already running to do this. The export takes minutes. The investigation after a
+failed rollback without templates takes days.
+
+---
+
+### Step 2 -- Verify stack naming convention
+
+The migration scripts build stack names from this formula:
+
+```
+poc-EXISTING-{domain}-{module}-{account}    <- old stacks
+poc-NEW-{domain}-{module}-{account}         <- new stacks
+```
+
+In a real environment your existing stacks may have names like `tesco-vpc-prod` or
+`networking-baseline-eu-west-1`. Before running Stage 2 you need to either rename
+the existing stacks (AWS allows this) or update the `cfn_stack_name` function in
+`scripts/lib/stack-names.sh` to match your actual naming pattern.
+
+Get a list of your live stack names:
+
+```bash
+aws cloudformation list-stacks \
+  --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE \
+  --query 'StackSummaries[].StackName' \
+  --output table
+```
+
+---
+
+### Step 3 -- Safety hardening (automated in Stage 2, but run early anyway)
+
+Stage 2 Pass 0 adds `DeletionPolicy: Retain` to every resource in every EXISTING
+stack automatically before any migration action is taken. You do not have to do
+this manually.
+
+But there is a good reason to do it earlier, weeks before migration day. Once
+Retain is in place, you can be confident that even an accidental `aws cloudformation
+delete-stack` will not destroy your infrastructure. It is a low-risk, zero-downtime
+operation and gives your team peace of mind during the preparation period.
+
+To harden a single stack early:
+
+```bash
+python3 new-structure/pipeline/add_deletion_policy.py \
+  --stack-name poc-EXISTING-networking-vpc-baseline-dev \
+  --region     eu-west-1
+```
+
+To harden all stacks in an account (dry run first):
+
+```bash
+for stack in $(aws cloudformation list-stacks \
+    --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE \
+    --query 'StackSummaries[].StackName' --output text); do
+  python3 new-structure/pipeline/add_deletion_policy.py \
+    --stack-name "${stack}" \
+    --region     eu-west-1 \
+    --dry-run
+done
+```
+
+Remove `--dry-run` once you are satisfied with the output.
+
+---
+
+### Step 4 -- Build the account delta files
+
+For each account you are migrating, create the per-account config files that
+tell the resolver what is unique about that account. For vpc-baseline that means
+the account ID, environment, VPC CIDR, VPC name, and all four subnet CIDRs:
+
+```bash
+# Get the current parameter values from the live stack
+aws cloudformation describe-stacks \
+  --stack-name poc-EXISTING-networking-vpc-baseline-dev \
+  --query 'Stacks[0].Parameters'
+```
+
+Use those values to write `new-structure/config/accounts/dev/networking/vpc-baseline.json`.
+Then validate the resolver produces the exact same values as the old stack:
+
+```bash
+python3 new-structure/pipeline/resolve_parameters.py \
+  --account dev --domain networking --module vpc-baseline \
+  --output /tmp/resolved-dev.json
+
+# Compare against the exported existing params
+diff <(python3 -c "import json; [print(p['ParameterKey'],p['ParameterValue'])
+    for p in sorted(json.load(open('/tmp/resolved-dev.json')),key=lambda x:x['ParameterKey'])]") \
+     <(python3 -c "import json; [print(p['ParameterKey'],p['ParameterValue'])
+    for p in sorted(json.load(open('existing-structure/dev/networking__vpc-baseline-params.json')),
+    key=lambda x:x['ParameterKey'])]")
+```
+
+If there is any diff, fix the account delta file before proceeding. Parity at the
+parameter level is the pre-condition for parity at the resource level.
+
+---
+
+### Step 5 -- Migrate module by module, not all at once
+
+This is the most important operational decision. Do not do a big-bang migration
+of all modules across all accounts on the same day. That is the maximum possible
+blast radius.
+
+The right approach is module by module, environment by environment:
+
+```
+1: Migrate networking/vpc-baseline in dev only
+         -> Run Stage 2 for dev
+         -> Watch the migration log
+         -> Run Stage 3 parity
+         -> Leave it for a few days and confirm nothing is broken
+
+2: Migrate networking/vpc-baseline in coll-dev
+         -> Same process
+         -> Confirm Route53, Transit Gateway, peering still works
+
+3: Migrate networking/vpc-baseline in coll-ppe and prod (one at a time)
+
+4: Start security/kms-key in dev -- repeat the cycle
+```
+
+The CI pipeline already supports this with delta mode. Each job in the matrix
+handles exactly one `(account, domain, module)` triple. You do not need to
+touch any account you are not ready for.
+
+To migrate a single module in a single account:
+
+```bash
+# Locally
+bash scripts/stage2-deploy-new.sh dev networking/vpc-baseline
+
+# Via GitHub Actions
+# migration-pipeline.yml -> Run workflow -> deploy_mode: full
+# (will only deploy modules whose account delta files exist for that account)
+```
+
+Module dependency order matters. In this POC the order is:
+
+```
+1. networking/vpc-baseline   -- no dependencies
+2. security/kms-key          -- depends on networking outputs via Fn::ImportValue
+3. shared-services/s3-bucket -- depends on networking + security outputs
+```
+
+Always migrate networking first. Starting s3-bucket before vpc-baseline is in
+UPDATE_COMPLETE (not just IMPORT_COMPLETE) will cause the S3 Phase 1 import to
+fail because the exported VpcId value does not exist yet.
+
+---
+
+### Step 6 -- Validate rollback works before committing
+
+Before you migrate any production account, confirm the full rollback cycle works
+in a non-production environment:
+
+```bash
+# 1. Run the full migration for dev
+bash scripts/stage1-deploy-existing.sh dev
+bash scripts/stage2-deploy-new.sh dev
+
+# 2. Confirm parity
+bash scripts/stage3-validate-parity.sh dev
+
+# 3. Cut over
+bash scripts/stage4-cutover.sh dev
+
+# 4. Roll back
+bash scripts/stage5-rollback.sh dev
+
+# 5. Confirm the EXISTING stacks are back and working
+bash scripts/stage3-validate-parity.sh dev
+```
+
+If Stage 5 fails, the most common reason is that the templates in `existing-structure/`
+do not match what was actually deployed. Fix the templates (Step 1) before migration day.
+
+---
+
+### What the migration log gives you
+
+Every Stage 2 run writes a log to `logs/migration-{account}-{timestamp}.log`.
+This log records, before any stack is deleted:
+
+- Every resolved parameter value (from the 4-layer merge)
+- Every physical resource ID and its CloudFormation logical ID
+- Which resources were left unmanaged (Option A resources)
+- Which resources were recreated rather than imported (Phase 2 resources)
+
+Keep these log files. They are the audit trail. In a post-incident review or
+a compliance audit, the migration log is the record of what was transferred,
+when, and what it mapped to.
+
+---
+
+### What rollback still cannot do automatically
+
+Stage 5 works because `existing-structure/` templates are committed to the repo.
+Two things remain manual in a real migration:
+
+**1. Templates for stacks that predate your version control.** If a stack was
+created directly in the console five years ago and the template was never exported,
+there is no rollback template. `aws cloudformation get-template` is the only way
+to recover it, and it must be done before the stack is deleted.
+
+**2. Stack parameter values that were not committed.** Stage 5 re-creates the
+EXISTING stacks using the parameters from `existing-structure/{account}/`. If
+those parameter files are empty or wrong, the recreated stack will have incorrect
+values. The pre-migration parameter export (Step 1) prevents this.
+
+Both of these are solved by doing Step 1 thoroughly before migration day.
+There is no shortcut.
