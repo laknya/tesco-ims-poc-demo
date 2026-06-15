@@ -58,15 +58,26 @@ while IFS= read -r domain_module; do
     continue
   fi
 
-  # Check if EXISTING stack already exists -- skip resolve if already restored
+  # Skip resolve only for healthy EXISTING stacks (already restored).
+  # Stuck states (UPDATE_ROLLBACK_COMPLETE etc.) must be re-resolved: the Phase 1
+  # template has no Outputs, so exports are absent until Phase 2 succeeds.
   OLD_STATUS=$(aws cloudformation describe-stacks \
     --stack-name "${OLD_STACK}" --region "${REGION}" \
     --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
 
-  if [ "${OLD_STATUS}" != "DOES_NOT_EXIST" ]; then
-    echo "  ${domain_module}: EXISTING stack already restored (${OLD_STATUS}) -- skipping resolve"
-    continue
-  fi
+  case "${OLD_STATUS}" in
+    ROLLBACK_COMPLETE|ROLLBACK_FAILED|CREATE_FAILED|UPDATE_ROLLBACK_FAILED|\
+    UPDATE_ROLLBACK_COMPLETE|IMPORT_ROLLBACK_COMPLETE|IMPORT_ROLLBACK_FAILED|\
+    DELETE_FAILED)
+      echo "  ${domain_module}: EXISTING stack stuck in ${OLD_STATUS} -- resolving from NEW stack for re-import..."
+      ;;
+    DOES_NOT_EXIST)
+      ;;
+    *)
+      echo "  ${domain_module}: EXISTING stack already restored (${OLD_STATUS}) -- skipping resolve"
+      continue
+      ;;
+  esac
 
   NEW_STATUS=$(aws cloudformation describe-stacks \
     --stack-name "${NEW_STACK}" --region "${REGION}" \
@@ -148,15 +159,29 @@ while IFS= read -r domain_module; do
     EXTRA_CAPS="--capabilities CAPABILITY_NAMED_IAM"
   fi
 
-  # Check whether the EXISTING stack already exists.
+  # Skip restore only for healthy EXISTING stacks.
+  # Stuck states are cleared first (DeletionPolicy: Retain keeps AWS resources)
+  # so re-import can adopt them. Without this, a stuck VPC stack would block
+  # all downstream stacks that import its exports (e.g. S3 BucketPolicy).
   OLD_STATUS=$(aws cloudformation describe-stacks \
     --stack-name "${OLD_STACK}" --region "${REGION}" \
     --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
 
-  if [ "${OLD_STATUS}" != "DOES_NOT_EXIST" ]; then
-    echo ">> ${OLD_STACK} already exists (${OLD_STATUS}) -- skipping"
-    continue
-  fi
+  case "${OLD_STATUS}" in
+    ROLLBACK_COMPLETE|ROLLBACK_FAILED|CREATE_FAILED|UPDATE_ROLLBACK_FAILED|\
+    UPDATE_ROLLBACK_COMPLETE|IMPORT_ROLLBACK_COMPLETE|IMPORT_ROLLBACK_FAILED|\
+    DELETE_FAILED)
+      echo ">> [WARN] ${OLD_STACK} stuck in ${OLD_STATUS} -- clearing for re-restore..."
+      cfn_delete_stack_robust "${OLD_STACK}" "${REGION}" ">>"
+      echo ">> [OK] Stuck EXISTING stack cleared -- will re-import below"
+      ;;
+    DOES_NOT_EXIST)
+      ;;
+    *)
+      echo ">> ${OLD_STACK} already exists (${OLD_STATUS}) -- skipping"
+      continue
+      ;;
+  esac
 
   if [ -f "${IMPORT_CONFIG}" ] && [ -f "${ROLLBACK_IMPORT_FILE}" ]; then
     # Import path: resources retained when NEW stack was deleted above.
