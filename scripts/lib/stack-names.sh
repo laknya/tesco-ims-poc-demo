@@ -182,9 +182,17 @@ cfn_delete_stack_robust() {
         sleep 10
         attempts=$((attempts + 1))
         if [ "${attempts}" -ge 90 ]; then
-          echo "${prefix}  [FAIL] Unexpected status '${status}' -- timed out"
+          echo "${prefix}  [FAIL] Timed out (15 min) -- '${stack}' stuck in '${status}'"
           return 1
-        fi ;;
+        fi
+        # Stack stayed in a non-delete status (e.g. CREATE_COMPLETE). In a parallel
+        # CI matrix, CFN silently refuses delete-stack when another stack is still
+        # importing this stack's exports -- the API returns 0 but the deletion never
+        # starts. Re-issue delete-stack on every retry; it will be accepted as soon
+        # as the blocking importer (e.g. S3 EXISTING) is removed by its own job.
+        aws cloudformation delete-stack \
+          --stack-name "${stack}" --region "${region}" 2>/dev/null || true
+        ;;
     esac
   done
 }

@@ -276,10 +276,12 @@ for p in params:
     SEEN_IN_PROGRESS=false
 
     while true; do
+      # Capture exit code explicitly with || to prevent set -e from exiting
+      # when the stack does not yet exist (AWS CLI exits 254 for missing stacks).
+      AWS_EXIT=0
       AWS_OUT=$(aws cloudformation describe-stacks \
         --stack-name "${DEP_STACK}" --region "${REGION}" \
-        --query 'Stacks[0].StackStatus' --output text 2>/tmp/aws_dep_err_$$.txt)
-      AWS_EXIT=$?
+        --query 'Stacks[0].StackStatus' --output text 2>/tmp/aws_dep_err_$$.txt) || AWS_EXIT=$?
 
       if [ ${AWS_EXIT} -ne 0 ]; then
         AWS_ERR=$(cat /tmp/aws_dep_err_$$.txt)
