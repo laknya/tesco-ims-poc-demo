@@ -186,15 +186,59 @@ echo "   Resources are safe -- deleting an EXISTING stack in Pass C will NOT des
 echo ""
 
 # ==========================================================================
+# PRE-CLASSIFICATION: check each module's NEW stack status before Pass B.
+#
+# NEEDS_MIGRATE -- NEW stack absent or stuck -- runs Pass B (resolve IDs),
+#                  Pass C (release EXISTING), and Pass D (import/deploy)
+# NEEDS_UPDATE  -- NEW stack healthy         -- bypasses TRANSFER gate,
+#                  only smart param refresh in Pass D
+#
+# This prevents the TRANSFER gate from listing already-migrated stacks and
+# avoids DRY RUN aborting when all NEW stacks are already healthy.
+# ==========================================================================
+NEEDS_MIGRATE=()
+NEEDS_UPDATE=()
+
+echo ">> Pre-classifying modules (checking NEW stack status)..."
+for domain_module in "${MODULES_TO_DEPLOY[@]}"; do
+  DOMAIN="${domain_module%/*}"
+  MODULE="${domain_module#*/}"
+  _PC_STACK=$(cfn_stack_name "NEW" "${DOMAIN}" "${MODULE}" "${ACCOUNT}")
+  _PC_STATUS=$(aws cloudformation describe-stacks \
+    --stack-name "${_PC_STACK}" --region "${REGION}" \
+    --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+  case "${_PC_STATUS}" in
+    ROLLBACK_COMPLETE|ROLLBACK_FAILED|CREATE_FAILED|UPDATE_ROLLBACK_FAILED|\
+    IMPORT_ROLLBACK_COMPLETE|IMPORT_ROLLBACK_FAILED|DELETE_FAILED|DOES_NOT_EXIST)
+      NEEDS_MIGRATE+=("${domain_module}")
+      echo "  ${domain_module}: NEW=${_PC_STATUS} -> [MIGRATE] (Pass B/C/D)"
+      ;;
+    *)
+      NEEDS_UPDATE+=("${domain_module}")
+      echo "  ${domain_module}: NEW=${_PC_STATUS} -> [UPDATE] (Pass D smart-check only)"
+      ;;
+  esac
+done
+echo ""
+if [ ${#NEEDS_MIGRATE[@]} -gt 0 ]; then
+  echo "  Will MIGRATE (TRANSFER gate required): ${NEEDS_MIGRATE[*]}"
+fi
+if [ ${#NEEDS_UPDATE[@]} -gt 0 ]; then
+  echo "  Will UPDATE  (no TRANSFER gate)      : ${NEEDS_UPDATE[*]}"
+fi
+echo ""
+
+# ==========================================================================
 # PASS B: Resolve -- while ALL EXISTING stacks still exist, resolve import
 # identifiers for each module that has an import-config.json.
 # Save resolved import JSON to /tmp for use in Pass D.
-# Skip if the NEW stack already exists (already migrated -- idempotent re-run).
+# Only runs for NEEDS_MIGRATE modules -- NEEDS_UPDATE already have healthy NEW
+# stacks and do not need import identifier resolution.
 # ==========================================================================
 echo ">> PASS B: Resolve -- capturing physical resource IDs from EXISTING stacks..."
 echo ""
 
-for domain_module in "${MODULES_TO_DEPLOY[@]}"; do
+for domain_module in "${NEEDS_MIGRATE[@]}"; do
   DOMAIN="${domain_module%/*}"
   MODULE="${domain_module#*/}"
 
@@ -377,50 +421,68 @@ echo ""
 # CI runs:     TRANSFER_CONFIRM env var must also equal "TRANSFER" -- blank or
 #              any other value aborts. There is no silent fallthrough.
 # ==========================================================================
-echo ""
-echo "+======================================================+"
-echo "|  READY TO TRANSFER OWNERSHIP                         "
-echo "|                                                      "
-echo "|  Pass B is complete. All resource mappings captured. "
-echo "|  Migration log: ${MIGRATION_LOG}"
-echo "|                                                      "
-echo "|  Pass C will DELETE the following EXISTING stacks:   "
-for dm in "${MODULES_TO_DEPLOY[@]}"; do
-  OLD=$(cfn_stack_name "EXISTING" "${dm%/*}" "${dm#*/}" "${ACCOUNT}")
-  echo "|    ${OLD}"
-done
-echo "|                                                      "
-echo "|  AWS resources are RETAINED (DeletionPolicy: Retain) "
-echo "|  Rollback via stage5-rollback.sh is still possible.  "
-echo "+======================================================+"
-echo ""
-
-if [ "${CI}" = "true" ]; then
-  if [ "${TRANSFER_CONFIRM:-}" = "TRANSFER" ]; then
-    echo ">> CI mode -- TRANSFER confirmed. Proceeding with Pass C."
-  else
-    echo ">> Aborted -- set confirm_release = TRANSFER in the workflow dispatch to proceed."
-    echo ">> EXISTING stacks are untouched. Re-run when ready."
-    exit 0
-  fi
-else
-  read -r -p ">> Type TRANSFER to confirm -- this will delete EXISTING stacks and transfer CloudFormation ownership to the new modules. Anything else cancels: " _TRANSFER_CONFIRM
-  if [ "${_TRANSFER_CONFIRM}" != "TRANSFER" ]; then
-    echo ""
-    echo ">> Migration cancelled. EXISTING stacks untouched."
-    echo ">> Re-run when ready. Pass B output is in: ${MIGRATION_LOG}"
-    exit 0
-  fi
+if [ ${#NEEDS_MIGRATE[@]} -eq 0 ]; then
   echo ""
-fi
-
-_mlog ""
-_mlog "CONFIRMATION GATE"
-_mlog "  $(date '+%Y-%m-%d %H:%M:%S UTC')  Proceeding with Pass C (release EXISTING stacks)"
-if [ "${CI}" = "true" ]; then
-  _mlog "  Mode: CI -- TRANSFER confirmed via workflow dispatch input"
+  echo "+======================================================+"
+  echo "|  ALL MODULES ALREADY MIGRATED                        "
+  echo "|                                                      "
+  echo "|  All NEW stacks are healthy -- no EXISTING stacks    "
+  echo "|  need to be released. Skipping TRANSFER gate.        "
+  echo "|  Pass D will smart-check for param/version changes.  "
+  echo "+======================================================+"
+  echo ""
+  if [ "${CI}" = "true" ] && [ "${TRANSFER_CONFIRM:-}" != "TRANSFER" ]; then
+    echo ">> DRY RUN -- TRANSFER not confirmed. Skipping Pass D."
+    echo ">> All modules are already migrated. To apply param/version changes,"
+    echo ">> re-run with confirm_release = TRANSFER."
+    exit 0
+  fi
 else
-  _mlog "  Mode: interactive -- operator typed TRANSFER"
+  echo ""
+  echo "+======================================================+"
+  echo "|  READY TO TRANSFER OWNERSHIP                         "
+  echo "|                                                      "
+  echo "|  Pass B is complete. All resource mappings captured. "
+  echo "|  Migration log: ${MIGRATION_LOG}"
+  echo "|                                                      "
+  echo "|  Pass C will DELETE the following EXISTING stacks:   "
+  for dm in "${NEEDS_MIGRATE[@]}"; do
+    OLD=$(cfn_stack_name "EXISTING" "${dm%/*}" "${dm#*/}" "${ACCOUNT}")
+    echo "|    ${OLD}"
+  done
+  echo "|                                                      "
+  echo "|  AWS resources are RETAINED (DeletionPolicy: Retain) "
+  echo "|  Rollback via stage5-rollback.sh is still possible.  "
+  echo "+======================================================+"
+  echo ""
+
+  if [ "${CI}" = "true" ]; then
+    if [ "${TRANSFER_CONFIRM:-}" = "TRANSFER" ]; then
+      echo ">> CI mode -- TRANSFER confirmed. Proceeding with Pass C."
+    else
+      echo ">> Aborted -- set confirm_release = TRANSFER in the workflow dispatch to proceed."
+      echo ">> EXISTING stacks are untouched. Re-run when ready."
+      exit 0
+    fi
+  else
+    read -r -p ">> Type TRANSFER to confirm -- this will delete EXISTING stacks and transfer CloudFormation ownership to the new modules. Anything else cancels: " _TRANSFER_CONFIRM
+    if [ "${_TRANSFER_CONFIRM}" != "TRANSFER" ]; then
+      echo ""
+      echo ">> Migration cancelled. EXISTING stacks untouched."
+      echo ">> Re-run when ready. Pass B output is in: ${MIGRATION_LOG}"
+      exit 0
+    fi
+    echo ""
+  fi
+
+  _mlog ""
+  _mlog "CONFIRMATION GATE"
+  _mlog "  $(date '+%Y-%m-%d %H:%M:%S UTC')  Proceeding with Pass C (release EXISTING stacks)"
+  if [ "${CI}" = "true" ]; then
+    _mlog "  Mode: CI -- TRANSFER confirmed via workflow dispatch input"
+  else
+    _mlog "  Mode: interactive -- operator typed TRANSFER"
+  fi
 fi
 
 # ==========================================================================
@@ -441,11 +503,12 @@ echo ""
   echo "========================================================"
 } >> "${MIGRATION_LOG}" 2>/dev/null || true
 
-# Collect modules in reverse order for deletion
+# Collect NEEDS_MIGRATE modules in reverse order for deletion.
+# NEEDS_UPDATE modules are skipped -- their NEW stacks are already healthy.
 REVERSE_MODULES=()
 while IFS= read -r domain_module; do
   REVERSE_MODULES=("${domain_module}" "${REVERSE_MODULES[@]}")
-done < <(printf '%s\n' "${MODULES_TO_DEPLOY[@]}")
+done < <(printf '%s\n' "${NEEDS_MIGRATE[@]}")
 
 for domain_module in "${REVERSE_MODULES[@]}"; do
   DOMAIN="${domain_module%/*}"
@@ -550,7 +613,7 @@ for domain_module in "${MODULES_TO_DEPLOY[@]}"; do
 
       # Compare resolved params against live params and module version.
       # Prints "no" when nothing changed, "yes (<reason>)" when update is needed.
-      NEEDS_UPDATE=$(python3 - "${RESOLVED}" "${LIVE_PARAMS_FILE}" "${VERSION}" "${LIVE_VERSION}" <<'PYEOF'
+      DEPLOY_NEEDED=$(python3 - "${RESOLVED}" "${LIVE_PARAMS_FILE}" "${VERSION}" "${LIVE_VERSION}" <<'PYEOF'
 import json, sys
 
 resolved_path, live_path, target_ver, live_ver = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
@@ -579,7 +642,7 @@ PYEOF
       )
       rm -f "${LIVE_PARAMS_FILE}"
 
-      if [ "${NEEDS_UPDATE}" = "no" ]; then
+      if [ "${DEPLOY_NEEDED}" = "no" ]; then
         echo "  |  [SKIP] No changes detected -- stack is already up to date"
         _mlog "  $(date '+%H:%M:%S')  SKIPPED    ${NEW_STACK}  v${VERSION}  (no param or version changes)"
         DEPLOYED+=("${NEW_STACK}")
@@ -587,7 +650,7 @@ PYEOF
         continue
       fi
 
-      echo "  |  Changes detected: ${NEEDS_UPDATE}"
+      echo "  |  Changes detected: ${DEPLOY_NEEDED}"
       echo "  |  Deploying update..."
       EXTRA_CAPS=""
       if grep -q "Type: AWS::IAM::" "${TEMPLATE}" 2>/dev/null; then
@@ -606,7 +669,7 @@ PYEOF
         --no-fail-on-empty-changeset \
         ${EXTRA_CAPS}
       echo "  |  [OK] ${NEW_STACK} [ModuleVersion=${VERSION}]"
-      _mlog "  $(date '+%H:%M:%S')  UPDATED    ${NEW_STACK}  v${VERSION}  (${NEEDS_UPDATE})"
+      _mlog "  $(date '+%H:%M:%S')  UPDATED    ${NEW_STACK}  v${VERSION}  (${DEPLOY_NEEDED})"
       DEPLOYED+=("${NEW_STACK}")
       echo ""
       continue

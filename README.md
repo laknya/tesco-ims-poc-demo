@@ -425,21 +425,36 @@ This is the main script. It transfers CloudFormation ownership from the old
 per-account stacks to the new centralized modules. Nothing gets deleted or
 recreated in AWS - only the CFN ownership changes.
 
-It runs in five passes with a confirmation gate between Pass B and Pass C:
+Before each run the script classifies every module into one of two tracks:
+
+- **MIGRATE** -- NEW stack absent or stuck. Needs Pass B (resolve IDs), the TRANSFER
+  gate, Pass C (delete EXISTING), and Pass D (import). The TRANSFER gate only appears
+  when at least one module is in this track.
+- **UPDATE** -- NEW stack healthy. Skips the TRANSFER gate entirely. Pass D
+  smart-checks params and version; deploys only if something changed, skips otherwise.
+
+The full pass sequence:
 
 ```
-Pass A  pre-flight    - version check + cfn-lint all modules (no AWS, fail fast)
-Pass 0  safety harden - add DeletionPolicy: Retain to ALL resources in ALL EXISTING stacks
-Pass B  resolve       - read physical IDs from EXISTING stacks while they still exist
+Pass A  pre-flight      - version check + cfn-lint all modules (no AWS, fail fast)
+Pass 0  safety harden   - add DeletionPolicy: Retain to ALL EXISTING stacks
         |
-        +-- CONFIRMATION GATE (the real point of no return)
-        |   Local run : prints mapping summary, requires typing TRANSFER to proceed
-        |               blank or anything else cancels immediately - nothing is touched
+        +-- PRE-CLASSIFICATION (checks NEW stack status for every module)
+        |   MIGRATE track -> Pass B, TRANSFER gate, Pass C, Pass D (import)
+        |   UPDATE track  -> Pass D only (smart param/version check, no TRANSFER)
+        |
+Pass B  resolve         - read physical IDs from EXISTING stacks (MIGRATE track only)
+        |
+        +-- CONFIRMATION GATE  (only shown when MIGRATE track is non-empty)
+        |   Local run : requires typing TRANSFER to proceed
+        |               blank or anything else cancels - nothing is touched
         |   CI run    : confirm_release input must equal TRANSFER in the workflow
-        |               dispatch form - blank or any other value aborts the job
+        |               dispatch form - blank or any other value aborts (DRY RUN)
+        |   If ALL modules are in the UPDATE track: gate is skipped entirely
         |
-Pass C  release       - delete all EXISTING stacks (DeletionPolicy: Retain keeps AWS resources)
-Pass D  import        - create NEW stacks using CFN Resource Import (two-phase)
+Pass C  release         - delete EXISTING stacks (MIGRATE track, reverse order)
+Pass D  import/update   - MIGRATE: create NEW stacks via CFN Resource Import
+                          UPDATE:  smart-check params/version, deploy only if changed
 ```
 
 Pass 0 is what makes Pass C safe. Before Stage 2 touches anything in AWS, it reads
@@ -452,6 +467,11 @@ critical safety step that ensures nothing is permanently destroyed.
 Pass C is where EXISTING stacks are deleted. This is the true cutover moment for
 CFN Import migrations - not Stage 4. Stage 4 is a no-op for modules migrated via
 CFN Import because their EXISTING stacks are already gone after Pass C.
+
+For already-migrated modules (UPDATE track), Pass D compares resolved config params
+against the live stack params. If nothing changed it prints `[SKIP]` and moves on.
+This makes repeated full runs fast and safe: only modules with genuine config or
+version changes are touched.
 
 If something goes wrong and you need to re-run, the script auto-detects stuck
 stacks (`ROLLBACK_COMPLETE`, `UPDATE_ROLLBACK_COMPLETE`, etc.), clears them while
