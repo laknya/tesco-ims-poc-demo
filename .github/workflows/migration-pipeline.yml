@@ -47,7 +47,7 @@ on:
         required: false
         default: dev
       confirm_release:
-        description: "Type MIGRATE to confirm you intend to release EXISTING stacks (Pass C). Any other value aborts."
+        description: "Type TRANSFER to confirm -- this will delete EXISTING stacks and transfer CloudFormation ownership to the new modules. Blank or any other value aborts."
         required: false
         default: ""
 
@@ -310,11 +310,10 @@ jobs:
       - name: "Deploy ${{ matrix.domain }}/${{ matrix.module }} -> ${{ matrix.account }}"
         id: deploy_new_module
         env:
-          # confirm_release is only set on workflow_dispatch runs where the operator
-          # explicitly typed MIGRATE. On push/PR (CI=true) the environment gate
-          # approval already serves as the governance confirmation -- the script
-          # checks CI=true and skips the interactive prompt automatically.
-          MIGRATE_CONFIRM: ${{ github.event.inputs.confirm_release }}
+          # TRANSFER_CONFIRM must equal "TRANSFER" for Pass C to proceed.
+          # Blank or any other value causes the script to abort at the gate.
+          # This applies on both push/PR and workflow_dispatch runs.
+          TRANSFER_CONFIRM: ${{ github.event.inputs.confirm_release }}
         run: |
           bash scripts/stage2-deploy-new.sh \
             ${{ matrix.account }} \
