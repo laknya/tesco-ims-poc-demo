@@ -24,7 +24,7 @@
 #   Pass A: Pre-flight    -- version check + cfn-lint all modules (no AWS, fail fast)
 #   Pass 0: Safety harden -- add DeletionPolicy: Retain to every EXISTING stack resource
 #   Pass B: Resolve       -- while EXISTING stacks still exist, resolve import IDs
-#   [GATE: type MIGRATE to continue]
+#   [GATE: type TRANSFER to continue]
 #   Pass C: Release       -- delete ALL EXISTING stacks in reverse order
 #   Pass D: Import/Deploy -- import (or deploy) ALL NEW stacks in forward order
 set -e
@@ -362,14 +362,13 @@ echo ""
 # ownership is released. Rollback is still possible via stage5 but requires
 # re-importing retained resources.
 #
-# Local runs:  require typed "MIGRATE" before proceeding.
-# CI runs:     the environment gate approval on the deploy job substitutes.
-#              Set CI=true (GitHub Actions does this automatically) to skip
-#              the interactive prompt.
+# Local runs:  require typing "TRANSFER" before proceeding.
+# CI runs:     TRANSFER_CONFIRM env var must also equal "TRANSFER" -- blank or
+#              any other value aborts. There is no silent fallthrough.
 # ==========================================================================
 echo ""
 echo "+======================================================+"
-echo "|  READY TO RELEASE EXISTING STACKS                    "
+echo "|  READY TO TRANSFER OWNERSHIP                         "
 echo "|                                                      "
 echo "|  Pass B is complete. All resource mappings captured. "
 echo "|  Migration log: ${MIGRATION_LOG}"
@@ -386,17 +385,16 @@ echo "+======================================================+"
 echo ""
 
 if [ "${CI}" = "true" ]; then
-  # In CI, GitHub Actions sets CI=true automatically.
-  # The environment gate approval on the deploy-new job is the governance layer.
-  # On workflow_dispatch runs, MIGRATE_CONFIRM may also be set -- log it either way.
-  if [ "${MIGRATE_CONFIRM:-}" = "MIGRATE" ]; then
-    echo ">> CI mode -- operator confirmed with MIGRATE input. Proceeding with Pass C."
+  if [ "${TRANSFER_CONFIRM:-}" = "TRANSFER" ]; then
+    echo ">> CI mode -- TRANSFER confirmed. Proceeding with Pass C."
   else
-    echo ">> CI mode -- environment gate approval is the confirmation. Proceeding with Pass C."
+    echo ">> Aborted -- set confirm_release = TRANSFER in the workflow dispatch to proceed."
+    echo ">> EXISTING stacks are untouched. Re-run when ready."
+    exit 0
   fi
 else
-  read -r -p ">> Type MIGRATE to release EXISTING stacks and proceed, or anything else to cancel: " _MIGRATE_CONFIRM
-  if [ "${_MIGRATE_CONFIRM}" != "MIGRATE" ]; then
+  read -r -p ">> Type TRANSFER to confirm -- this will delete EXISTING stacks and transfer CloudFormation ownership to the new modules. Anything else cancels: " _TRANSFER_CONFIRM
+  if [ "${_TRANSFER_CONFIRM}" != "TRANSFER" ]; then
     echo ""
     echo ">> Migration cancelled. EXISTING stacks untouched."
     echo ">> Re-run when ready. Pass B output is in: ${MIGRATION_LOG}"
@@ -409,9 +407,9 @@ _mlog ""
 _mlog "CONFIRMATION GATE"
 _mlog "  $(date '+%Y-%m-%d %H:%M:%S UTC')  Proceeding with Pass C (release EXISTING stacks)"
 if [ "${CI}" = "true" ]; then
-  _mlog "  Mode: CI -- environment gate${MIGRATE_CONFIRM:+ + MIGRATE input}"
+  _mlog "  Mode: CI -- TRANSFER confirmed via workflow dispatch input"
 else
-  _mlog "  Mode: interactive -- operator typed MIGRATE"
+  _mlog "  Mode: interactive -- operator typed TRANSFER"
 fi
 
 # ==========================================================================
