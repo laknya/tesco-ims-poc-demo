@@ -71,7 +71,7 @@ jobs:
     name: 01 Validate (no AWS)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install tools
         run: pip install cfn-lint boto3 pyyaml pytest pytest-timeout jsonschema
@@ -197,7 +197,7 @@ jobs:
       has_changes:    ${{ steps.detect.outputs.has_changes }}
       mode:           ${{ steps.detect.outputs.mode }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0   # needed for git diff across commits
 
@@ -297,13 +297,13 @@ jobs:
       url: >-
         https://eu-west-1.console.aws.amazon.com/cloudformation/home?region=eu-west-1#/stacks
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install tools
         run: pip install cfn-lint boto3 pyyaml
 
       - name: Configure AWS via OIDC
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/tesco-ims-migration-deploy-role
           aws-region: ${{ env.AWS_REGION }}
@@ -358,7 +358,7 @@ jobs:
 
       - name: Upload migration log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: "migration-log-${{ matrix.account }}-${{ matrix.domain }}-${{ matrix.module }}"
           path: logs/
@@ -384,13 +384,13 @@ jobs:
       url: >-
         https://eu-west-1.console.aws.amazon.com/cloudformation/home?region=eu-west-1#/stacks
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install tools
         run: pip install boto3 pyyaml
 
       - name: Configure AWS via OIDC
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/tesco-ims-migration-deploy-role
           aws-region: ${{ env.AWS_REGION }}
