@@ -5,13 +5,16 @@ name: TESCO IMS Migration Pipeline
 #  Every push/PR runs validation (no AWS). On main:
 #
 #  validate
-#    +->> detect-changes          (no AWS -- computes deploy matrix from git diff)
-#          +->> [GATE: tesco-ims-deploy-existing]
-#                +->> deploy-existing  (full: existing stacks are always idempotent)
-#                      +->> [GATE: tesco-ims-deploy-new]
-#                            +->> deploy-new  (MATRIX -- only changed modules)
-#                                  +->> [GATE: tesco-ims-parity-check]
-#                                        +->> parity-check  (MATRIX -- same changed modules)
+#    +->> detect-changes     (no AWS -- computes deploy matrix from git diff)
+#          +->> [GATE: tesco-ims-deploy-new]
+#                +->> deploy-new  (MATRIX -- only changed modules)
+#                      +->> [GATE: tesco-ims-parity-check]
+#                            +->> parity-check  (MATRIX -- same changed modules)
+#
+#  NOTE: EXISTING stacks are deployed by a separate workflow:
+#    .github/workflows/demo-setup-existing.yml
+#  Run that workflow BEFORE the demo to create the BEFORE picture.
+#  This pipeline focuses on NEW module deployment and parity only.
 #
 #  Delta logic (detect-changes):
 #    modules/{domain}/{module}/template.yaml  -> all accounts using that module
@@ -264,81 +267,20 @@ jobs:
 
           ${MODULES}
 
-          If has_changes is false, jobs 03 Deploy NEW and 05 Parity Check are skipped.
+          If has_changes is false, Deploy NEW and Parity Check jobs are skipped.
           Run workflow_dispatch with deploy_mode=full to force a complete redeploy.
           SUMMARY_EOF
 
   # ----------------------------------------------------------------------
-  # JOB 3: Deploy EXISTING -- GATE: tesco-ims-deploy-existing
-  #  Always full (idempotent -- existing stacks represent the live baseline).
-  #  detect-changes does not gate this job -- existing infra is always refreshed.
-  # ----------------------------------------------------------------------
-  deploy-existing:
-    name: 03 Deploy EXISTING -- dev (full, idempotent)
-    runs-on: ubuntu-latest
-    needs: detect-changes
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
-    environment:
-      name: tesco-ims-deploy-existing
-      url: https://eu-west-1.console.aws.amazon.com/cloudformation/home?region=eu-west-1#/stacks
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Configure AWS via OIDC
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/tesco-ims-migration-deploy-role
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Deploy existing per-account structure -- dev (all modules, idempotent)
-        id: deploy_existing
-        run: bash scripts/stage1-deploy-existing.sh ${{ env.DEMO_ACCOUNT }}
-
-      - name: Write job summary
-        if: always()
-        run: |
-          STATUS="${{ job.status }}"
-          if [ "${STATUS}" = "success" ]; then RESULT="PASS"; else RESULT="FAIL"; fi
-          ACCOUNT="${{ env.DEMO_ACCOUNT }}"
-          REGION="${{ env.AWS_REGION }}"
-          source scripts/lib/stack-names.sh
-          STACK_LINES=""
-          while IFS= read -r dm; do
-            STACK=$(cfn_stack_name "EXISTING" "${dm%/*}" "${dm#*/}" "${ACCOUNT}")
-            STACK_LINES="${STACK_LINES}| ${STACK} | ${dm} |\n"
-          done < <(discover_existing_modules "${ACCOUNT}" 2>/dev/null || true)
-          {
-            echo "## 03 Deploy EXISTING -- ${RESULT}"
-            echo ""
-            echo "| Setting | Value |"
-            echo "|---------|-------|"
-            echo "| Account | ${ACCOUNT} |"
-            echo "| Region | ${REGION} |"
-            echo "| Mode | Full (idempotent -- always redeploys all existing stacks) |"
-            echo "| Job status | ${STATUS} |"
-            echo ""
-            echo "**Stacks deployed (existing per-account structure -- auto-discovered):**"
-            echo ""
-            echo "| Stack | Module |"
-            echo "|-------|--------|"
-            printf "%b" "${STACK_LINES}"
-            echo ""
-            echo "These stacks are the BEFORE state. They stay running alongside the new"
-            echo "centralized stacks so that the parity check can compare OLD vs NEW."
-            echo "Adding a new module to existing-structure/${ACCOUNT}/ will automatically"
-            echo "appear here on the next run -- no pipeline changes needed."
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  # ----------------------------------------------------------------------
-  # JOB 4: Deploy NEW -- GATE: tesco-ims-deploy-new
+  # JOB 3: Deploy NEW -- GATE: tesco-ims-deploy-new
   #  MATRIX job: each matrix item is one (account, domain, module) triple.
   #  Only changed modules (from detect-changes) are in the matrix.
   #  All matrix instances share one approval gate -- reviewer approves once.
   # ----------------------------------------------------------------------
   deploy-new:
-    name: "04 Deploy NEW -- ${{ matrix.account }} ${{ matrix.domain }}/${{ matrix.module }}"
+    name: "03 Deploy NEW -- ${{ matrix.account }} ${{ matrix.domain }}/${{ matrix.module }}"
     runs-on: ubuntu-latest
-    needs: [deploy-existing, detect-changes]
+    needs: [detect-changes]
     if: |
       (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
       && needs.detect-changes.outputs.has_changes == 'true'
@@ -382,7 +324,7 @@ jobs:
           VERSION=$(python3 -c "import json; print(json.load(open('new-structure/modules/${DOMAIN}/${MODULE}/version.json'))['version'])" 2>/dev/null || echo "unknown")
           TYPE=$(python3 -c "import json; print(json.load(open('new-structure/modules/${DOMAIN}/${MODULE}/version.json'))['type_name'])" 2>/dev/null || echo "unknown")
           cat >> "$GITHUB_STEP_SUMMARY" << SUMMARY_EOF
-          ## 04 Deploy NEW -- ${RESULT}
+          ## 03 Deploy NEW -- ${RESULT}
 
           | Setting | Value |
           |---------|-------|
@@ -406,12 +348,12 @@ jobs:
           SUMMARY_EOF
 
   # ----------------------------------------------------------------------
-  # JOB 5: Parity Check -- GATE: tesco-ims-parity-check
+  # JOB 4: Parity Check -- GATE: tesco-ims-parity-check
   #  MATRIX job: validates each deployed module pair (EXISTING vs NEW).
   #  Same matrix as deploy-new -- only changed modules are checked.
   # ----------------------------------------------------------------------
   parity-check:
-    name: "05 Parity -- ${{ matrix.account }} ${{ matrix.domain }}/${{ matrix.module }}"
+    name: "04 Parity -- ${{ matrix.account }} ${{ matrix.domain }}/${{ matrix.module }}"
     runs-on: ubuntu-latest
     needs: [deploy-new, detect-changes]
     if: |
@@ -479,7 +421,7 @@ jobs:
           OLD=$(cfn_stack_name "EXISTING" "${DOMAIN}" "${MODULE}" "${ACCOUNT}")
           NEW=$(cfn_stack_name "NEW"      "${DOMAIN}" "${MODULE}" "${ACCOUNT}")
           cat >> "$GITHUB_STEP_SUMMARY" << SUMMARY_EOF
-          ## 05 Parity Check -- ${RESULT}
+          ## 04 Parity Check -- ${RESULT}
 
           | Setting | Value |
           |---------|-------|
