@@ -129,6 +129,145 @@ def _lookup_ec2_by_tag(resource_type, stack_name, logical_id, ec2, stack_cache=N
     return None
 
 
+def _lookup_ec2_by_params(resource_type, logical_id, ec2, params, stack_cache):
+    """
+    Secondary EC2 fallback using CIDR blocks, VPC attachment, and params.
+
+    aws:cloudformation:stack-name and aws:cloudformation:logical-id tags are
+    REMOVED by AWS when a stack is deleted with DeletionPolicy:Retain. This
+    fallback works without any CFN tags by anchoring every lookup to the VPC
+    found via its CIDR block (unique per account), then deriving subnets by
+    CIDR, the IGW by VPC attachment, and the route table by VPC + Name tag.
+    """
+    vpc_cidr = params.get("VpcCidr")
+    vpc_name = params.get("VpcName", "")
+
+    # Associations do not need a VPC lookup -- they derive from stack_cache.
+    if resource_type != "AWS::EC2::SubnetRouteTableAssociation":
+        vpc_id = stack_cache.get("VPC")
+        if not vpc_id and vpc_cidr:
+            try:
+                r = ec2.describe_vpcs(Filters=[
+                    {"Name": "cidr-block-association.cidr-block", "Values": [vpc_cidr]}
+                ])
+                vpcs = r.get("Vpcs", [])
+                if len(vpcs) == 1:
+                    vpc_id = vpcs[0]["VpcId"]
+                    stack_cache["VPC"] = vpc_id
+                    print(f"    VPC: {vpc_id}  (CIDR {vpc_cidr} params fallback)")
+                elif len(vpcs) > 1:
+                    print(
+                        f"    [WARN] {len(vpcs)} VPCs share CIDR {vpc_cidr} -- "
+                        f"cannot auto-select; specify VpcId explicitly.",
+                        file=sys.stderr,
+                    )
+                    return None
+            except ClientError as exc:
+                print(f"    [WARN] VPC CIDR lookup failed: {exc}", file=sys.stderr)
+                return None
+
+        if resource_type == "AWS::EC2::VPC":
+            return vpc_id
+
+        if not vpc_id:
+            return None
+
+    try:
+        if resource_type == "AWS::EC2::InternetGateway":
+            r = ec2.describe_internet_gateways(Filters=[
+                {"Name": "attachment.vpc-id", "Values": [vpc_id]}
+            ])
+            igws = r.get("InternetGateways", [])
+            if igws:
+                igw_id = igws[0]["InternetGatewayId"]
+                print(f"    {logical_id}: {igw_id}  (VPC-attachment params fallback)")
+                return igw_id
+
+        elif resource_type == "AWS::EC2::Subnet":
+            cidr_key_map = {
+                "PublicSubnetA":  "PublicSubnetACidr",
+                "PublicSubnetB":  "PublicSubnetBCidr",
+                "PrivateSubnetA": "PrivateSubnetACidr",
+                "PrivateSubnetB": "PrivateSubnetBCidr",
+            }
+            cidr_key = cidr_key_map.get(logical_id)
+            cidr = params.get(cidr_key) if cidr_key else None
+            if not cidr:
+                print(
+                    f"    [WARN] No CIDR param mapped for subnet '{logical_id}' -- "
+                    f"add a cidr_key_map entry in _lookup_ec2_by_params if this subnet "
+                    f"uses a different logical ID.",
+                    file=sys.stderr,
+                )
+                return None
+            r = ec2.describe_subnets(Filters=[
+                {"Name": "vpc-id", "Values": [vpc_id]},
+                {"Name": "cidr-block", "Values": [cidr]},
+            ])
+            subnets = r.get("Subnets", [])
+            if subnets:
+                subnet_id = subnets[0]["SubnetId"]
+                print(f"    {logical_id}: {subnet_id}  (CIDR {cidr} params fallback)")
+                return subnet_id
+
+        elif resource_type == "AWS::EC2::RouteTable":
+            # Non-main route table in the VPC.  Name tag disambiguates when
+            # multiple custom route tables exist (e.g. public + private).
+            rt_name = f"{vpc_name}-public-rt" if vpc_name else None
+            filters = [{"Name": "vpc-id", "Values": [vpc_id]}]
+            if rt_name:
+                filters.append({"Name": "tag:Name", "Values": [rt_name]})
+            r = ec2.describe_route_tables(Filters=filters)
+            rts = r.get("RouteTables", [])
+            non_main = [
+                rt for rt in rts
+                if not any(a.get("Main") for a in rt.get("Associations", []))
+            ]
+            target = non_main[0] if non_main else (rts[0] if rts else None)
+            if target:
+                rt_id = target["RouteTableId"]
+                print(f"    {logical_id}: {rt_id}  (VPC non-main RT params fallback)")
+                return rt_id
+
+        elif resource_type == "AWS::EC2::SubnetRouteTableAssociation":
+            # Derive subnet from stack_cache (subnet MUST be resolved before
+            # its association -- the import-config resources_to_import order
+            # guarantees this).
+            subnet_id = None
+            best_match = ""
+            for cached_logical, cached_physical in stack_cache.items():
+                if (str(cached_physical).startswith("subnet-")
+                        and logical_id.startswith(cached_logical)
+                        and len(cached_logical) > len(best_match)):
+                    best_match = cached_logical
+                    subnet_id = cached_physical
+            if not subnet_id:
+                print(
+                    f"    [WARN] Cannot derive subnet for '{logical_id}' from "
+                    f"stack_cache -- subnet must be resolved before its association.",
+                    file=sys.stderr,
+                )
+                return None
+            r = ec2.describe_route_tables(
+                Filters=[{"Name": "association.subnet-id", "Values": [subnet_id]}]
+            )
+            for rt in r.get("RouteTables", []):
+                for assoc in rt.get("Associations", []):
+                    if assoc.get("SubnetId") == subnet_id:
+                        assoc_id = assoc["RouteTableAssociationId"]
+                        print(
+                            f"    {logical_id}: {assoc_id}  "
+                            f"(subnet {subnet_id} assoc params fallback)"
+                        )
+                        return assoc_id
+
+    except ClientError as exc:
+        print(f"    [WARN] Params-based EC2 lookup failed for {logical_id}: {exc}",
+              file=sys.stderr)
+
+    return None
+
+
 def _lookup_kms_by_tag(resource_type, stack_name, logical_id, kms, params, stack_cache):
     if resource_type == "AWS::KMS::Key":
         env = params.get("Environment", "")
@@ -218,12 +357,24 @@ def _lookup_s3_by_param(resource_type, params):
 
 
 def lookup_by_cfn_tag(resource_type, stack_name, logical_id, region, params, stack_cache=None):
-    """Locate a retained resource using CFN tags or param values."""
+    """Locate a retained resource using CFN tags or param values.
+
+    Resolution order for EC2:
+      1. CFN system tags (aws:cloudformation:stack-name / logical-id) -- present
+         while the resource is CFN-managed but REMOVED on DeletionPolicy:Retain
+         stack deletion.
+      2. Params-based fallback (CIDR blocks, VPC attachment) -- survives tag
+         removal because it uses immutable resource attributes from the params file.
+    """
     if stack_cache is None:
         stack_cache = {}
     if resource_type.startswith("AWS::EC2::"):
         ec2 = boto3.client("ec2", region_name=region)
-        return _lookup_ec2_by_tag(resource_type, stack_name, logical_id, ec2, stack_cache)
+        result = _lookup_ec2_by_tag(resource_type, stack_name, logical_id, ec2, stack_cache)
+        if result:
+            return result
+        print(f"    {logical_id}: CFN tags not found -- trying CIDR/params fallback...")
+        return _lookup_ec2_by_params(resource_type, logical_id, ec2, params, stack_cache)
     elif resource_type.startswith("AWS::KMS::"):
         kms = boto3.client("kms", region_name=region)
         return _lookup_kms_by_tag(resource_type, stack_name, logical_id, kms, params, stack_cache)
