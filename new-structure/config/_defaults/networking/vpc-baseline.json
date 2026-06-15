@@ -1,10 +1,6 @@
 {
   "EnableDnsHostnames": "true",
   "EnableDnsSupport":   "true",
-  "PublicSubnetACidr":  "10.0.1.0/24",
-  "PublicSubnetBCidr":  "10.0.2.0/24",
-  "PrivateSubnetACidr": "10.0.10.0/24",
-  "PrivateSubnetBCidr": "10.0.11.0/24",
   "CostCentre":         "TESCO-IMS-PLATFORM",
   "ManagedBy":          "github-actions"
 }

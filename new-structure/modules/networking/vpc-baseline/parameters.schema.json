@@ -33,10 +33,10 @@
       "type": "string",
       "enum": ["true", "false"]
     },
-    "PublicSubnetACidr":  { "type": "string" },
-    "PublicSubnetBCidr":  { "type": "string" },
-    "PrivateSubnetACidr": { "type": "string" },
-    "PrivateSubnetBCidr": { "type": "string" },
+    "PublicSubnetACidr":  { "type": "string", "pattern": "^[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}/[0-9]{1,2}$" },
+    "PublicSubnetBCidr":  { "type": "string", "pattern": "^[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}/[0-9]{1,2}$" },
+    "PrivateSubnetACidr": { "type": "string", "pattern": "^[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}/[0-9]{1,2}$" },
+    "PrivateSubnetBCidr": { "type": "string", "pattern": "^[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}/[0-9]{1,2}$" },
     "CostCentre": {
       "type": "string",
       "minLength": 1
