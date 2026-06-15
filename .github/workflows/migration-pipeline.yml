@@ -54,15 +54,13 @@ on:
 env:
   AWS_REGION: eu-west-1
   DEMO_ACCOUNT: dev
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 permissions:
   id-token: write
   contents: read
   pull-requests: write
   deployments: write   # required for GitHub Environments gate status reporting
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
 
