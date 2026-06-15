@@ -28,19 +28,19 @@ spread across 68 accounts, and we fixed it.
 9. [How the Migration Works](#how-the-migration-works)
 10. [Non-Importable Resource Types](#non-importable-resource-types)
 11. [Migration Scripts](#migration-scripts)
-    - [stage1 -- Set Up the Demo BEFORE State](#stage1-deploy-existingsh----set-up-the-demo-before-state)
-    - [stage2 -- The Core Migration](#stage2-deploy-newsh----the-core-migration)
-    - [stage3 -- Prove OLD Equals NEW](#stage3-validate-paritysh----prove-old-equals-new)
-    - [stage4 -- Make the New Structure Permanent](#stage4-cutoversh----make-the-new-structure-permanent)
-    - [stage5 -- Emergency Restore](#stage5-rollbacksh----emergency-restore-last-resort)
+    - [stage1 - Set Up the Demo BEFORE State](#stage1-deploy-existingsh----set-up-the-demo-before-state)
+    - [stage2 - The Core Migration](#stage2-deploy-newsh----the-core-migration)
+    - [stage3 - Prove OLD Equals NEW](#stage3-validate-paritysh----prove-old-equals-new)
+    - [stage4 - Make the New Structure Permanent](#stage4-cutoversh----make-the-new-structure-permanent)
+    - [stage5 - Emergency Restore](#stage5-rollbacksh----emergency-restore-last-resort)
 12. [Pipeline Scripts](#pipeline-scripts)
 13. [CI/CD Pipelines](#cicd-pipelines)
     - [End-to-End Pipeline Flow](#end-to-end-pipeline-flow)
     - [How to Run the Pipelines](#how-to-run-the-pipelines)
 14. [Safety Invariants](#safety-invariants)
-15. [Running the Demo -- Step by Step](#running-the-demo----step-by-step)
-    - [Part 1 -- Local Demo (No AWS Needed)](#part-1----the-local-demo-no-aws-needed)
-    - [Part 2 -- Live AWS Migration Demo](#part-2----the-live-aws-migration-demo)
+15. [Running the Demo - Step by Step](#running-the-demo----step-by-step)
+    - [Part 1 - Local Demo (No AWS Needed)](#part-1----the-local-demo-no-aws-needed)
+    - [Part 2 - Live AWS Migration Demo](#part-2----the-live-aws-migration-demo)
 16. [Adding a New Module](#adding-a-new-module)
 17. [Adding a New Account](#adding-a-new-account)
 18. [Running Locally (No AWS Needed)](#running-locally-no-aws-needed)
@@ -142,7 +142,7 @@ new-structure/modules/{domain}/{module}/
 ### template.yaml
 
 This is the master CloudFormation template. The key rule is that there are zero
-hardcoded values in it -- every value is either a `!Ref` or a `!Sub` on a
+hardcoded values in it - every value is either a `!Ref` or a `!Sub` on a
 parameter. This is what makes the same file work for every account.
 
 Every resource also has `DeletionPolicy: Retain` and `UpdateReplacePolicy: Retain`
@@ -166,9 +166,9 @@ This file is the "how do we migrate" manifest. It declares which resources in th
 template are importable into CloudFormation ownership, and exactly how to find
 the physical ID of each one in AWS. There are three ways an ID can be found:
 
-- `stack-resource` -- look it up from the live EXISTING stack while it still exists
-- `param` -- read the value directly from the resolved parameters JSON (e.g. a known bucket name)
-- `literal` -- it is a fixed string written directly in this config file
+- `stack-resource` - look it up from the live EXISTING stack while it still exists
+- `param` - read the value directly from the resolved parameters JSON (e.g. a known bucket name)
+- `literal` - it is a fixed string written directly in this config file
 
 This file is read by two scripts: `generate_import_template.py` builds the Phase 1
 filtered template using it, and `resolve_import.py` uses it to build the import
@@ -177,12 +177,12 @@ identifiers list.
 ### version.json
 
 Contains three things:
-- `template_hash` -- SHA256 of `template.yaml`. CI checks this on every push and
+- `template_hash` - SHA256 of `template.yaml`. CI checks this on every push and
   fails if the template was changed without bumping the version. This stops silent
   unversioned changes from reaching AWS.
-- `type_name` -- the CloudFormation private registry type name (this is for the
+- `type_name` - the CloudFormation private registry type name (this is for the
   production path where modules are published as proper CFN extensions)
-- `status` -- the registry version the pipeline deploys by default
+- `status` - the registry version the pipeline deploys by default
 
 ---
 
@@ -215,7 +215,7 @@ Two resource types are intentionally NOT in this template:
 | `AWS::EC2::VPCGatewayAttachment` | AWS uses a readOnlyProperty called `AttachmentType` as the import identifier but never exposes its value via any API. There is no way to discover it, so we cannot import it. |
 
 Both of these resources stay alive in AWS without any CloudFormation managing them.
-This is fine -- they continue to work, we just do not manage their lifecycle.
+This is fine - they continue to work, we just do not manage their lifecycle.
 
 ### security/kms-key
 
@@ -226,7 +226,7 @@ This module manages the platform KMS key for an account.
 It creates one `AWS::KMS::Key` (AES-256, 30-day deletion window, auto-rotation
 enabled) and one `AWS::KMS::Alias`. The key thing here is that the key policy
 principals (`KeyAdminArn`, `KeyUsageArn`) are parameters, not hardcoded ARNs.
-The security team controls those values through the config JSON files -- rotating
+The security team controls those values through the config JSON files - rotating
 a principal never requires touching the template.
 
 This module has no cross-stack dependencies and deploys first. Two importable
@@ -240,7 +240,7 @@ This module manages the platform S3 bucket for an account.
 
 It creates a KMS-encrypted, versioned S3 bucket with public access blocked and a
 90-day lifecycle rule. It also creates a bucket policy that denies all access
-from outside the VPC -- the bucket policy uses `Fn::ImportValue` to pull in the
+from outside the VPC - the bucket policy uses `Fn::ImportValue` to pull in the
 VPC stack's exported `VpcId`. The VPC and S3 module are explicitly linked.
 
 The bucket policy (`AWS::S3::BucketPolicy`) is not CFN-importable. During the
@@ -261,10 +261,10 @@ different values.
 ```
 new-structure/config/
 
-  _defaults/{domain}/{module}.json                 Layer 1 -- org-wide shared values (lowest priority)
-  environments/{env}/{domain}/{module}.json         Layer 2 -- optional env-specific overrides
-  ous/{ou}/{domain}/{module}.json                   Layer 3 -- optional OU-specific overrides
-  accounts/{account}/{domain}/{module}.json         Layer 4 -- per-account delta (highest priority)
+  _defaults/{domain}/{module}.json                 Layer 1 - org-wide shared values (lowest priority)
+  environments/{env}/{domain}/{module}.json         Layer 2 - optional env-specific overrides
+  ous/{ou}/{domain}/{module}.json                   Layer 3 - optional OU-specific overrides
+  accounts/{account}/{domain}/{module}.json         Layer 4 - per-account delta (highest priority)
 ```
 
 The resolver script (`resolve_parameters.py`) reads `_accounts-registry.yaml` to
@@ -272,7 +272,7 @@ find out which environment and OU an account belongs to, then applies all 4 laye
 
 Here is a real example for `sandbox / networking / vpc-baseline`:
 
-Layer 1 -- `_defaults/networking/vpc-baseline.json` (4 values -- only true org-wide constants):
+Layer 1 - `_defaults/networking/vpc-baseline.json` (4 values - only true org-wide constants):
 ```json
 {
   "EnableDnsHostnames": "true",
@@ -282,7 +282,7 @@ Layer 1 -- `_defaults/networking/vpc-baseline.json` (4 values -- only true org-w
 }
 ```
 
-Layer 4 -- `accounts/sandbox/networking/vpc-baseline.json` (8 values -- all account-specific):
+Layer 4 - `accounts/sandbox/networking/vpc-baseline.json` (8 values - all account-specific):
 ```json
 {
   "AccountId":          "999888777666",
@@ -297,7 +297,7 @@ Layer 4 -- `accounts/sandbox/networking/vpc-baseline.json` (8 values -- all acco
 ```
 
 The resolver merges these and produces a single flat 12-parameter file for
-CloudFormation. Every account declares its own CIDRs explicitly -- no account
+CloudFormation. Every account declares its own CIDRs explicitly - no account
 can accidentally inherit another account's subnet ranges.
 
 Why CIDRs are NOT in defaults: in a real AWS estate where accounts are connected
@@ -349,16 +349,16 @@ created. No resources are deleted. Only which stack "owns" them changes.
 This works because AWS CloudFormation supports `--change-set-type IMPORT`, which
 lets you adopt an existing AWS resource into a new stack without recreating it.
 For this to be safe, every resource in every template must have
-`DeletionPolicy: Retain` -- this guarantees that if a stack is deleted, the
+`DeletionPolicy: Retain` - this guarantees that if a stack is deleted, the
 physical AWS resource stays alive.
 
 The migration for each module follows a two-phase import pattern:
 
 ```
-Phase 1     -- filtered IMPORT changeset: importable resources only, no Outputs or Tags yet
-Phase 1.5   -- cleanup: delete physical resources that would conflict with Phase 2
+Phase 1     - filtered IMPORT changeset: importable resources only, no Outputs or Tags yet
+Phase 1.5   - cleanup: delete physical resources that would conflict with Phase 2
                (e.g. the stale 0.0.0.0/0 route, the existing BucketPolicy)
-Phase 2     -- full UPDATE: adds non-importable resources, Outputs, and Tags
+Phase 2     - full UPDATE: adds non-importable resources, Outputs, and Tags
 ```
 
 Phase 1.5 exists because some resources cannot be imported (Route, BucketPolicy)
@@ -405,7 +405,7 @@ Module discovery also happens automatically. Scripts find modules by looking for
 files named `{domain}__{module}-template.yaml`. Add a new file there and it
 appears in every stage script with no code changes.
 
-### stage1-deploy-existing.sh -- Set Up the Demo BEFORE State
+### stage1-deploy-existing.sh - Set Up the Demo BEFORE State
 
 This deploys the old per-account templates so your audience can see what the
 68-stack world looks like in the CloudFormation console before the migration runs.
@@ -418,36 +418,38 @@ retained resources back into a fresh EXISTING stack.
 bash scripts/stage1-deploy-existing.sh dev
 ```
 
-### stage2-deploy-new.sh -- The Core Migration
+### stage2-deploy-new.sh - The Core Migration
 
 This is the main script. It transfers CloudFormation ownership from the old
 per-account stacks to the new centralized modules. Nothing gets deleted or
-recreated in AWS -- only the CFN ownership changes.
+recreated in AWS - only the CFN ownership changes.
 
 It runs in five passes with a confirmation gate between Pass B and Pass C:
 
 ```
-Pass A  pre-flight    -- version check + cfn-lint all modules (no AWS, fail fast)
-Pass 0  safety harden -- add DeletionPolicy: Retain to ALL resources in ALL EXISTING stacks
-Pass B  resolve       -- read physical IDs from EXISTING stacks while they still exist
+Pass A  pre-flight    - version check + cfn-lint all modules (no AWS, fail fast)
+Pass 0  safety harden - add DeletionPolicy: Retain to ALL resources in ALL EXISTING stacks
+Pass B  resolve       - read physical IDs from EXISTING stacks while they still exist
         |
         +-- CONFIRMATION GATE (the real point of no return)
-        |   Local run : prints mapping summary, requires typing MIGRATE to proceed
-        |   CI run    : environment gate approval on the deploy-new job is the confirmation
+        |   Local run : prints mapping summary, requires typing TRANSFER to proceed
+        |               blank or anything else cancels immediately - nothing is touched
+        |   CI run    : confirm_release input must equal TRANSFER in the workflow
+        |               dispatch form - blank or any other value aborts the job
         |
-Pass C  release       -- delete all EXISTING stacks (DeletionPolicy: Retain keeps AWS resources)
-Pass D  import        -- create NEW stacks using CFN Resource Import (two-phase)
+Pass C  release       - delete all EXISTING stacks (DeletionPolicy: Retain keeps AWS resources)
+Pass D  import        - create NEW stacks using CFN Resource Import (two-phase)
 ```
 
 Pass 0 is what makes Pass C safe. Before Stage 2 touches anything in AWS, it reads
 every EXISTING stack template, patches every resource with `DeletionPolicy: Retain`,
-and deploys the update. This is idempotent -- if Retain is already there it exits in
+and deploys the update. This is idempotent - if Retain is already there it exits in
 seconds. In a POC environment the templates are pre-authored with Retain so Pass 0 is
 a fast no-op. In a real migration against stacks created years ago, Pass 0 is the
 critical safety step that ensures nothing is permanently destroyed.
 
 Pass C is where EXISTING stacks are deleted. This is the true cutover moment for
-CFN Import migrations -- not Stage 4. Stage 4 is a no-op for modules migrated via
+CFN Import migrations - not Stage 4. Stage 4 is a no-op for modules migrated via
 CFN Import because their EXISTING stacks are already gone after Pass C.
 
 If something goes wrong and you need to re-run, the script auto-detects stuck
@@ -459,7 +461,7 @@ bash scripts/stage2-deploy-new.sh dev                           # all modules
 bash scripts/stage2-deploy-new.sh dev networking/vpc-baseline   # just one module
 ```
 
-### stage3-validate-parity.sh -- Prove OLD Equals NEW
+### stage3-validate-parity.sh - Prove OLD Equals NEW
 
 Runs 5 checks comparing the old and new stacks side by side to confirm they are
 functionally equivalent:
@@ -471,13 +473,13 @@ functionally equivalent:
 5. Same subnet CIDR blocks, sorted (networking module only)
 
 For the modules in this POC, parity auto-passes because the EXISTING stack is
-already gone after stage 2 -- CFN ownership has been fully transferred.
+already gone after stage 2 - CFN ownership has been fully transferred.
 
 ```bash
 bash scripts/stage3-validate-parity.sh dev
 ```
 
-### stage4-cutover.sh -- Final Governance Checkpoint
+### stage4-cutover.sh - Final Governance Checkpoint
 
 For modules migrated via CFN Import (all three in this POC), the EXISTING stacks
 are already gone after Stage 2 Pass C. Stage 4 finds them as `DOES_NOT_EXIST`
@@ -499,7 +501,7 @@ The script still provides a formal sign-off point and runs with four safeguards:
 bash scripts/stage4-cutover.sh dev
 ```
 
-### stage5-rollback.sh -- Emergency Restore (Last Resort)
+### stage5-rollback.sh - Emergency Restore (Last Resort)
 
 If something critical went wrong after cutover and you cannot fix it forward,
 this script restores the old EXISTING stacks from the AWS resources retained by
@@ -508,9 +510,9 @@ this script restores the old EXISTING stacks from the AWS resources retained by
 Use this only as a last resort. Requires typing `ROLLBACK` to confirm. Three-pass flow:
 
 ```
-Pass A  resolve  -- capture physical IDs from NEW stacks while they exist
-Pass B  release  -- delete NEW stacks (resources stay in AWS)
-Pass C  restore  -- re-import retained resources back into EXISTING stacks
+Pass A  resolve  - capture physical IDs from NEW stacks while they exist
+Pass B  release  - delete NEW stacks (resources stay in AWS)
+Pass C  restore  - re-import retained resources back into EXISTING stacks
 ```
 
 ```bash
@@ -523,7 +525,7 @@ bash scripts/stage5-rollback.sh dev
 
 These Python scripts live in `new-structure/pipeline/` and do all the heavy lifting.
 
-**`resolve_parameters.py`** -- Merges the 4 config layers into a flat
+**`resolve_parameters.py`** - Merges the 4 config layers into a flat
 `[{ParameterKey, ParameterValue}]` JSON file that CloudFormation can consume directly.
 
 ```bash
@@ -531,30 +533,30 @@ python3 new-structure/pipeline/resolve_parameters.py \
   --account dev --domain networking --module vpc-baseline --output /tmp/resolved.json
 ```
 
-**`resolve_import.py`** -- Builds the `--resources-to-import` JSON array for a
+**`resolve_import.py`** - Builds the `--resources-to-import` JSON array for a
 CFN import changeset. Has three fallback levels when the source stack is gone:
 first it tries CFN system tags, then falls back to finding resources by their
 CIDR blocks and VPC attachment, then fails with a clear error if neither works.
 
-**`generate_import_template.py`** -- Produces the Phase 1 filtered template by
+**`generate_import_template.py`** - Produces the Phase 1 filtered template by
 stripping non-importable resources (`AWS::EC2::Route`, `AWS::S3::BucketPolicy`),
 Outputs, and Metadata. Also outputs a cleanup-actions file describing what needs
 to be deleted at Phase 1.5.
 
-**`validate_parity.py`** -- Runs the 5-check side-by-side comparison between
+**`validate_parity.py`** - Runs the 5-check side-by-side comparison between
 old and new stacks using boto3.
 
-**`detect_changes.py`** -- Maps git-changed files to the set of
+**`detect_changes.py`** - Maps git-changed files to the set of
 `(account, domain, module)` triples that need to be redeployed. Used by CI for
-delta deploys -- only changed modules get queued.
+delta deploys - only changed modules get queued.
 
-**`validate_schema.py`** -- Validates every account JSON config against its
+**`validate_schema.py`** - Validates every account JSON config against its
 module's `parameters.schema.json` before any AWS call is made.
 
-**`check_module_versions.py`** -- Recomputes each template's SHA256 and fails
+**`check_module_versions.py`** - Recomputes each template's SHA256 and fails
 CI if it does not match `version.json`. Prevents silent unversioned changes.
 
-**`generate_account_params.py`** -- Reads `_accounts-registry.yaml` and
+**`generate_account_params.py`** - Reads `_accounts-registry.yaml` and
 generates `config/generated/account-metadata/{account}.json` for every account.
 
 ---
@@ -563,7 +565,7 @@ generates `config/generated/account-metadata/{account}.json` for every account.
 
 All workflows are in `.github/workflows/`.
 
-### migration-pipeline.yml -- The Main Pipeline
+### migration-pipeline.yml - The Main Pipeline
 
 Runs on every push and PR. AWS deployment jobs only run on the `main` branch.
 
@@ -579,22 +581,22 @@ By default it only deploys modules whose files actually changed. If you need to
 force a full redeploy, use `workflow_dispatch` with `deploy_mode=full`.
 
 For modules using CFN Import, parity auto-passes when the EXISTING stack is
-already gone -- no side-by-side comparison is needed because the resources are
+already gone - no side-by-side comparison is needed because the resources are
 already managed by the new stack.
 
-### demo-setup-existing.yml -- Before-State Setup
+### demo-setup-existing.yml - Before-State Setup
 
 Triggered manually only. Run this before a demo to deploy the old per-account
 EXISTING stacks so your audience can see the before state in the CloudFormation
 console. Completely independent from the migration pipeline.
 
-### migration-cutover.yml -- Stage 4 Cutover
+### migration-cutover.yml - Stage 4 Cutover
 
 Triggered manually only. Requires `confirm = CUTOVER` input and environment gate
 approval. Runs `stage4-cutover.sh` which re-runs parity internally before
 deleting anything.
 
-### migration-rollback.yml -- Stage 5 Rollback
+### migration-rollback.yml - Stage 5 Rollback
 
 Triggered manually only. Emergency use. Requires `confirm = ROLLBACK` input and
 environment gate approval.
@@ -606,16 +608,16 @@ environment gate approval.
 Here is how the three pipelines connect for a full migration from BEFORE to DONE:
 
 ```
-STEP 1 -- Show the before state
+STEP 1 - Show the before state
   GitHub Actions -> demo-setup-existing.yml -> Run workflow -> account: dev
   Result: poc-EXISTING-networking-vpc-baseline-dev (and kms, s3) appear in AWS console
 
-STEP 2 -- Run the migration
+STEP 2 - Run the migration
   GitHub Actions -> migration-pipeline.yml -> Run workflow -> deploy_mode: full
   OR just push to main (delta mode detects changed files automatically)
   Result: NEW stacks created, EXISTING stacks released, resources transferred
 
-STEP 3 -- Cut over (make it permanent)
+STEP 3 - Cut over (make it permanent)
   GitHub Actions -> migration-cutover.yml -> Run workflow -> confirm: CUTOVER
   Click Approve on the environment gate when prompted
   Result: any remaining EXISTING stacks retired, NEW stacks are now canonical
@@ -645,7 +647,7 @@ deploy-new and parity jobs run against AWS. All four must go green.
 
 **To cut over:** Go to `migration-cutover.yml`, click "Run workflow", type
 `CUTOVER` exactly into the confirm field. The pipeline will pause at an
-environment gate -- a reviewer clicks Approve in GitHub. The script then re-runs
+environment gate - a reviewer clicks Approve in GitHub. The script then re-runs
 parity one more time internally before deleting anything. If parity fails the
 cutover aborts automatically.
 
@@ -677,7 +679,7 @@ is safe to run and re-run:
 
 - **Nothing is hardcoded in the scripts.** Module names come from file discovery.
   Stack names are built from a formula. Adding a new module file is all you need
-  to do -- no script changes required.
+  to do - no script changes required.
 
 ---
 
@@ -694,7 +696,7 @@ is safe to run and re-run:
 
 Keep `{domain}/{module}` exactly consistent across all 6 files. That path is the
 key that ties everything together. `detect_changes.py` discovers the new module
-automatically from the file path -- no pipeline changes needed.
+automatically from the file path - no pipeline changes needed.
 
 ---
 
@@ -733,25 +735,25 @@ No template files to copy. No pipeline code to change.
 
 ---
 
-## Running the Demo -- Step by Step
+## Running the Demo - Step by Step
 
 This section covers the full sequence from zero to a live demo in front of
 stakeholders. There are two parts: things you do locally (no AWS), and things
 you trigger through GitHub Actions (needs AWS credentials configured).
 
-### Part 1 -- The Local Demo (No AWS Needed)
+### Part 1 - The Local Demo (No AWS Needed)
 
 Run this first to show the problem and the solution side by side. Takes about
 10 minutes and works on any laptop.
 
-**Step 1 -- Show the problem**
+**Step 1 - Show the problem**
 
 Open `existing-structure/dev/networking__vpc-baseline-template.yaml` in your
 editor. This is 160 lines with every value hardcoded. Then open
 `existing-structure/coll-dev/networking__vpc-baseline-template.yaml` next to
-it. Point out they are nearly identical -- 96% duplicated content.
+it. Point out they are nearly identical - 96% duplicated content.
 
-**Step 2 -- Run the resolver to show the solution**
+**Step 2 - Run the resolver to show the solution**
 
 ```bash
 python3 new-structure/pipeline/resolve_parameters.py \
@@ -762,9 +764,9 @@ python3 new-structure/pipeline/resolve_parameters.py \
 
 Walk through what it outputs: 8 values came from `_defaults/`, 4 account-specific
 values came from `accounts/sandbox/`. Total: 12 parameters. Same 12 parameters
-that are in the old hardcoded file -- but now generated from 4 lines.
+that are in the old hardcoded file - but now generated from 4 lines.
 
-**Step 3 -- Show "one change propagates everywhere"**
+**Step 3 - Show "one change propagates everywhere"**
 
 ```bash
 bash scripts/demo-one-change.sh
@@ -776,58 +778,58 @@ automatically. That is the moment that lands with stakeholders.
 
 ---
 
-### Part 2 -- The Live AWS Migration Demo
+### Part 2 - The Live AWS Migration Demo
 
 This requires AWS credentials and takes 20-30 minutes. Run the GitHub Actions
 pipelines in this exact order:
 
 ```
 BEFORE STATE (run first, before any stakeholders arrive)
-+------------------------------------------------------------+
-|  GitHub Actions -> demo-setup-existing.yml                |
-|  Run workflow -> account: dev                             |
-|  Wait for green                                           |
-|  Shows: poc-EXISTING-networking-vpc-baseline-dev          |
-|          poc-EXISTING-security-kms-key-dev                |
-|          poc-EXISTING-shared-services-s3-bucket-dev       |
-|  in the CloudFormation console                            |
-+------------------------------------------------------------+
+------------------------------------------------------------
+  GitHub Actions -> demo-setup-existing.yml                
+  Run workflow -> account: dev                             
+  Wait for green                                           
+  Shows: poc-EXISTING-networking-vpc-baseline-dev          
+          poc-EXISTING-security-kms-key-dev                
+          poc-EXISTING-shared-services-s3-bucket-dev       
+  in the CloudFormation console                            
+------------------------------------------------------------
                            |
                            | (audience can now see the old stacks in AWS)
                            v
 MIGRATION (run live in front of the audience)
-+------------------------------------------------------------+
-|  GitHub Actions -> migration-pipeline.yml                 |
-|  Run workflow -> deploy_mode: full                        |
-|  Watch the 4 jobs run in the GitHub Actions UI:           |
-|    01 Validate -> 02 Detect Changes ->                    |
-|    03 Deploy NEW -> 04 Parity                             |
-|  While it runs, explain each phase                        |
-|  Result: NEW stacks appear in CloudFormation console      |
-+------------------------------------------------------------+
+------------------------------------------------------------
+  GitHub Actions -> migration-pipeline.yml                 
+  Run workflow -> deploy_mode: full                        
+  Watch the 4 jobs run in the GitHub Actions UI:           
+    01 Validate -> 02 Detect Changes ->                    
+    03 Deploy NEW -> 04 Parity                             
+  While it runs, explain each phase                        
+  Result: NEW stacks appear in CloudFormation console      
+------------------------------------------------------------
                            |
                            | (pause here to show parity results)
                            v
-CUTOVER (optional -- only if you want to show the full journey)
-+------------------------------------------------------------+
-|  GitHub Actions -> migration-cutover.yml                  |
-|  Run workflow -> confirm: CUTOVER (type exactly)          |
-|  Reviewer clicks Approve on the environment gate          |
-|  Script re-runs parity internally before deleting         |
-|  Result: EXISTING stacks gone, NEW stacks are canonical   |
-+------------------------------------------------------------+
+CUTOVER (optional - only if you want to show the full journey)
+------------------------------------------------------------
+  GitHub Actions -> migration-cutover.yml                  
+  Run workflow -> confirm: CUTOVER (type exactly)          
+  Reviewer clicks Approve on the environment gate          
+  Script re-runs parity internally before deleting         
+  Result: EXISTING stacks gone, NEW stacks are canonical   
+------------------------------------------------------------
 ```
 
 **What to say at each step:**
 
-- **Before migration:** "Look at the CloudFormation console -- three stacks, one
+- **Before migration:** "Look at the CloudFormation console - three stacks, one
   per service, all managed per-account. This is what 68 accounts looks like."
 
 - **During migration:** "Watch what happens. We are not deleting anything. We are
   transferring CloudFormation ownership from the old stacks to the new centralized
-  module. The VPC, the subnets, the KMS key -- they all stay alive throughout."
+  module. The VPC, the subnets, the KMS key - they all stay alive throughout."
 
-- **After parity passes:** "Five checks -- parameters, resource types, output keys,
+- **After parity passes:** "Five checks - parameters, resource types, output keys,
   VPC CIDR, subnet CIDRs. All green. The new module produces identical
   infrastructure to the per-account template. This is the proof."
 
@@ -858,7 +860,7 @@ from the retained AWS resources.
 # Install everything you need
 pip install cfn-lint boto3 pyyaml pytest jsonschema
 
-# See the solution -- lint the new shared master template
+# See the solution - lint the new shared master template
 cfn-lint new-structure/modules/networking/vpc-baseline/template.yaml
 
 # Validate all JSON config files
@@ -888,7 +890,7 @@ requires preparation work that cannot be automated away.
 
 ---
 
-### Step 1 -- Export all existing templates and parameters
+### Step 1 - Export all existing templates and parameters
 
 This is the most important thing you can do before migration day. The templates
 in `existing-structure/` are the rollback blueprint. Without them, Stage 5
@@ -918,7 +920,7 @@ failed rollback without templates takes days.
 
 ---
 
-### Step 2 -- Verify stack naming convention
+### Step 2 - Verify stack naming convention
 
 The migration scripts build stack names from this formula:
 
@@ -943,7 +945,7 @@ aws cloudformation list-stacks \
 
 ---
 
-### Step 3 -- Safety hardening (automated in Stage 2, but run early anyway)
+### Step 3 - Safety hardening (automated in Stage 2, but run early anyway)
 
 Stage 2 Pass 0 adds `DeletionPolicy: Retain` to every resource in every EXISTING
 stack automatically before any migration action is taken. You do not have to do
@@ -979,7 +981,7 @@ Remove `--dry-run` once you are satisfied with the output.
 
 ---
 
-### Step 4 -- Build the account delta files
+### Step 4 - Build the account delta files
 
 For each account you are migrating, create the per-account config files that
 tell the resolver what is unique about that account. For vpc-baseline that means
@@ -1013,7 +1015,7 @@ parameter level is the pre-condition for parity at the resource level.
 
 ---
 
-### Step 5 -- Migrate module by module, not all at once
+### Step 5 - Migrate module by module, not all at once
 
 This is the most important operational decision. Do not do a big-bang migration
 of all modules across all accounts on the same day. That is the maximum possible
@@ -1034,7 +1036,7 @@ The right approach is module by module, environment by environment:
 
 3: Migrate networking/vpc-baseline in coll-ppe and prod (one at a time)
 
-4: Start security/kms-key in dev -- repeat the cycle
+4: Start security/kms-key in dev - repeat the cycle
 ```
 
 The CI pipeline already supports this with delta mode. Each job in the matrix
@@ -1055,9 +1057,9 @@ bash scripts/stage2-deploy-new.sh dev networking/vpc-baseline
 Module dependency order matters. In this POC the order is:
 
 ```
-1. networking/vpc-baseline   -- no dependencies
-2. security/kms-key          -- depends on networking outputs via Fn::ImportValue
-3. shared-services/s3-bucket -- depends on networking + security outputs
+1. networking/vpc-baseline   - no dependencies
+2. security/kms-key          - depends on networking outputs via Fn::ImportValue
+3. shared-services/s3-bucket - depends on networking + security outputs
 ```
 
 Always migrate networking first. Starting s3-bucket before vpc-baseline is in
@@ -1066,7 +1068,7 @@ fail because the exported VpcId value does not exist yet.
 
 ---
 
-### Step 6 -- Validate rollback works before committing
+### Step 6 - Validate rollback works before committing
 
 Before you migrate any production account, confirm the full rollback cycle works
 in a non-production environment:
