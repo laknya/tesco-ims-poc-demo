@@ -45,6 +45,7 @@ spread across 68 accounts, and we fixed it.
 17. [Adding a New Account](#adding-a-new-account)
 18. [Running Locally (No AWS Needed)](#running-locally-no-aws-needed)
 19. [Real Migration Prerequisites](#real-migration-prerequisites)
+20. [Known Issues and Fixes](#known-issues-and-fixes)
 
 ---
 
@@ -1129,3 +1130,23 @@ values. The pre-migration parameter export (Step 1) prevents this.
 
 Both of these are solved by doing Step 1 thoroughly before migration day.
 There is no shortcut.
+
+---
+
+## Known Issues and Fixes
+
+### IGW detached after VPC manual deletion - PublicRoute fails in Phase 2
+
+**Symptom:** Stage 1 fails with a CloudFormation error on the `PublicRoute`
+resource:
+
+
+**If you hit this before running Stage 1 again** (e.g. after a manual stack
+deletion), reattach the IGW manually once and then re-run:
+
+```bash
+aws ec2 attach-internet-gateway \
+  --internet-gateway-id igw-xxxxx \
+  --vpc-id vpc-xxxxx \
+  --region eu-west-1
+```

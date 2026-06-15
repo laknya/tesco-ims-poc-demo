@@ -283,6 +283,11 @@ cfn_import_then_update() {
   fi
   echo "${prefix}[OK] Phase 1 complete -- resources imported."
 
+  # Phase 1.5a: re-attach any VPCGatewayAttachment listed as Option A in
+  # the import-config. The attachment is not CFN-importable so it is left
+  # unmanaged, but it must exist before Phase 2 creates PublicRoute.
+  _cfn_repair_gateway_attachment "${import_config}" "${resources_json}" "${region}" "${prefix}"
+
   # Phase 1.5: delete physical resources that would collide in Phase 2.
   _cfn_cleanup_conflicts "${actions_file}" "${resources_json}" "${region}" "${prefix}"
 
@@ -371,6 +376,68 @@ _cfn_wait_status() {
       return 1
     fi
   done
+}
+
+# Internal: ensure VPCGatewayAttachment is in place for any module that lists
+# AWS::EC2::VPCGatewayAttachment in option_a_resources.
+# The attachment cannot be imported via CFN, so it is left unmanaged (Option A).
+# When the owning stack is deleted and re-imported, the attachment may be gone;
+# this function detects and repairs it before Phase 2 tries to create PublicRoute.
+_cfn_repair_gateway_attachment() {
+  local import_config="$1" resources_json="$2" region="$3" prefix="${4:-  }"
+
+  # Skip if this module has no option_a VPCGatewayAttachment.
+  local needs_attachment
+  needs_attachment=$(python3 -c "
+import json, sys
+c = json.load(open('${import_config}'))
+opt = c.get('option_a_resources', [])
+print('yes' if any(r.get('ResourceType') == 'AWS::EC2::VPCGatewayAttachment' for r in opt) else 'no')
+" 2>/dev/null) || needs_attachment="no"
+  [ "${needs_attachment}" = "yes" ] || return 0
+
+  # Resolve the physical VPC and IGW IDs from the import resources JSON.
+  local vpc_id igw_id
+  vpc_id=$(python3 -c "
+import json, sys
+res = json.load(open('${resources_json}'))
+m = {r['LogicalResourceId']: r['ResourceIdentifier'] for r in res}
+print(m.get('VPC', {}).get('VpcId', ''))
+" 2>/dev/null)
+  igw_id=$(python3 -c "
+import json, sys
+res = json.load(open('${resources_json}'))
+m = {r['LogicalResourceId']: r['ResourceIdentifier'] for r in res}
+print(m.get('InternetGateway', {}).get('InternetGatewayId', ''))
+" 2>/dev/null)
+
+  if [ -z "${vpc_id}" ] || [ -z "${igw_id}" ]; then
+    echo "${prefix}  [WARN] Phase 1.5a: could not resolve VPC/IGW IDs -- skipping attachment repair"
+    return 0
+  fi
+
+  # Check whether the IGW is already attached to our VPC.
+  local attached_vpc
+  attached_vpc=$(aws ec2 describe-internet-gateways \
+    --internet-gateway-ids "${igw_id}" --region "${region}" \
+    --query "InternetGateways[0].Attachments[?State=='available'].VpcId" \
+    --output text 2>/dev/null | tr '\t' '\n' | grep -w "${vpc_id}" || true)
+
+  if [ -n "${attached_vpc}" ]; then
+    echo "${prefix}  Phase 1.5a: IGW ${igw_id} already attached to ${vpc_id} -- nothing to do"
+    return 0
+  fi
+
+  echo "${prefix}  Phase 1.5a: IGW ${igw_id} is detached -- re-attaching to ${vpc_id}..."
+  if aws ec2 attach-internet-gateway \
+      --internet-gateway-id "${igw_id}" \
+      --vpc-id "${vpc_id}" \
+      --region "${region}"; then
+    echo "${prefix}  [OK] Phase 1.5a: IGW attached to ${vpc_id}"
+  else
+    echo "${prefix}  [FAIL] Phase 1.5a: attach-internet-gateway failed -- Phase 2 PublicRoute will fail"
+    return 1
+  fi
 }
 
 # Internal: delete physical resources that would collide when Phase 2 recreates them.
