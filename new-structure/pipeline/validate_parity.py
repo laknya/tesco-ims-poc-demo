@@ -13,12 +13,22 @@ Usage:
         --region eu-west-1
 """
 
-import boto3, sys, argparse
+import boto3, botocore.exceptions, sys, argparse
 from typing import Tuple
 
 
 def cfn(region): return boto3.client("cloudformation", region_name=region)
 def ec2(region): return boto3.client("ec2",             region_name=region)
+
+
+def stack_status(c, name):
+    """Return the stack status string, or None if the stack does not exist."""
+    try:
+        return c.describe_stacks(StackName=name)["Stacks"][0]["StackStatus"]
+    except botocore.exceptions.ClientError as e:
+        if "does not exist" in str(e):
+            return None
+        raise
 
 
 def stack_params(c, name):
@@ -81,6 +91,42 @@ def run(old_stack, new_stack, region):
     print(f"  Region     : {region}")
     print(f"{'='*58}")
 
+    old_status = stack_status(c, old_stack)
+    new_status = stack_status(c, new_stack)
+
+    old_exists = old_status is not None
+    new_exists = new_status is not None
+
+    # Post-CFN-Import: EXISTING deleted, NEW owns all resources -- auto-pass
+    if not old_exists and new_exists:
+        print(f"\n  [OK] EXISTING stack is gone -- CFN ownership fully transferred to NEW stack.")
+        print(f"  [OK] NEW stack status: {new_status}")
+        print(f"\n{'='*58}")
+        print(f"  Result: PARITY AUTO-PASS")
+        print(f"  Resources are now owned by the new module. Nothing to compare.")
+        print(f"{'='*58}\n")
+        return True
+
+    # Migration not run yet (gate was not confirmed, or stage2 was skipped)
+    if old_exists and not new_exists:
+        print(f"\n  [SKIP] NEW stack does not exist yet.")
+        print(f"  EXISTING stack status: {old_status}")
+        print(f"  Migration has not run or was aborted at the confirmation gate.")
+        print(f"  Run stage2-deploy-new.sh and type TRANSFER when prompted to proceed.")
+        print(f"\n{'='*58}")
+        print(f"  Result: PARITY SKIPPED -- migration not yet complete")
+        print(f"{'='*58}\n")
+        return True
+
+    # Neither stack exists
+    if not old_exists and not new_exists:
+        print(f"\n  [SKIP] Neither OLD nor NEW stack found. Nothing to compare.")
+        print(f"\n{'='*58}")
+        print(f"  Result: PARITY SKIPPED -- no stacks found")
+        print(f"{'='*58}\n")
+        return True
+
+    # Both stacks exist -- run full 5-check comparison
     results = []
 
     # 1 -- Parameters

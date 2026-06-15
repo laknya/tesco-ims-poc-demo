@@ -307,7 +307,7 @@ jobs:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/tesco-ims-migration-deploy-role
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: "Deploy ${{ matrix.domain }}/${{ matrix.module }} -> ${{ matrix.account }}"
+      - name: "${{ github.event.inputs.confirm_release == 'TRANSFER' && format('Deploy {0}/{1} -> {2}', matrix.domain, matrix.module, matrix.account) || format('DRY RUN (no TRANSFER) -- {0}/{1} -> {2}', matrix.domain, matrix.module, matrix.account) }}"
         id: deploy_new_module
         env:
           # TRANSFER_CONFIRM must equal "TRANSFER" for Pass C to proceed.
@@ -347,14 +347,21 @@ jobs:
 
           **What this step did:**
           - Resolved 4-layer parameters (defaults -> environments -> OUs -> account delta)
-          - Waited for any cross-stack dependencies (VpcStackName, KmsStackName) to be ready
           - Ran cfn-lint on the master template
-          - Deployed ONE centralized template to account ${ACCOUNT}
-          - This same template is used for every account -- no per-account copy needed
+          - Added DeletionPolicy: Retain to all EXISTING stack resources (Pass 0)
+          - Captured physical resource IDs and wrote migration log (Pass B)
+          ${{ github.event.inputs.confirm_release == 'TRANSFER' && '- Deleted EXISTING stacks and imported resources into NEW stacks (Pass C + D)' || '- **DRY RUN**: stopped at confirmation gate -- Pass C (transfer) did NOT run' }}
 
-          The stack ${STACK} now exists in CloudFormation.
-          Run parity check next to verify OLD == NEW.
+          ${{ github.event.inputs.confirm_release == 'TRANSFER' && format('The stack {0} now exists in CloudFormation. Run parity check next to verify OLD == NEW.', env.STACK) || 'To complete the migration re-run this workflow and set confirm_release = TRANSFER.' }}
           SUMMARY_EOF
+
+      - name: Upload migration log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: "migration-log-${{ matrix.account }}-${{ matrix.domain }}-${{ matrix.module }}"
+          path: logs/
+          if-no-files-found: ignore
 
   # ----------------------------------------------------------------------
   # JOB 4: Parity Check -- GATE: tesco-ims-parity-check
