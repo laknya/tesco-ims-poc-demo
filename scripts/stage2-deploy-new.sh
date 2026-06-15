@@ -66,12 +66,15 @@ echo "+======================================================+"
 echo ""
 
 # In CI, warn early if TRANSFER was not confirmed so the log is unambiguous.
+# Note: this only affects modules that need EXISTING stack deletion (MIGRATE track).
+# Modules whose NEW stacks are already healthy (UPDATE track) will still have
+# param/version changes deployed via Pass D smart-check regardless.
 if [ "${CI}" = "true" ] && [ "${TRANSFER_CONFIRM:-}" != "TRANSFER" ]; then
   echo "+======================================================+"
-  echo "|  DRY RUN -- Pass C (ownership transfer) will NOT run "
+  echo "|  TRANSFER not confirmed -- Pass C will NOT run       "
   echo "|  confirm_release was not set to TRANSFER             "
-  echo "|  Passes A, 0, and B will complete (read-only checks) "
-  echo "|  No EXISTING stacks will be deleted or transferred   "
+  echo "|  Modules needing EXISTING deletion: DRY RUN only     "
+  echo "|  Modules already migrated: Pass D smart-check runs   "
   echo "+======================================================+"
   echo ""
 fi
@@ -431,12 +434,6 @@ if [ ${#NEEDS_MIGRATE[@]} -eq 0 ]; then
   echo "|  Pass D will smart-check for param/version changes.  "
   echo "+======================================================+"
   echo ""
-  if [ "${CI}" = "true" ] && [ "${TRANSFER_CONFIRM:-}" != "TRANSFER" ]; then
-    echo ">> DRY RUN -- TRANSFER not confirmed. Skipping Pass D."
-    echo ">> All modules are already migrated. To apply param/version changes,"
-    echo ">> re-run with confirm_release = TRANSFER."
-    exit 0
-  fi
 else
   echo ""
   echo "+======================================================+"

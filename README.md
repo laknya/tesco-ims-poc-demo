@@ -448,8 +448,9 @@ Pass B  resolve         - read physical IDs from EXISTING stacks (MIGRATE track 
         +-- CONFIRMATION GATE  (only shown when MIGRATE track is non-empty)
         |   Local run : requires typing TRANSFER to proceed
         |               blank or anything else cancels - nothing is touched
-        |   CI run    : confirm_release input must equal TRANSFER in the workflow
-        |               dispatch form - blank or any other value aborts (DRY RUN)
+        |   CI run    : confirm_release input must equal TRANSFER to run Pass C
+        |               without TRANSFER, MIGRATE-track modules DRY RUN and exit
+        |               UPDATE-track modules always proceed to Pass D regardless
         |   If ALL modules are in the UPDATE track: gate is skipped entirely
         |
 Pass C  release         - delete EXISTING stacks (MIGRATE track, reverse order)
