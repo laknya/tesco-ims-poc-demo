@@ -431,6 +431,12 @@ if [ ${#NEEDS_MIGRATE[@]} -eq 0 ]; then
   echo "|  Pass D will smart-check for param/version changes.  "
   echo "+======================================================+"
   echo ""
+  if [ "${CI}" = "true" ] && [ "${TRANSFER_CONFIRM:-}" != "TRANSFER" ]; then
+    echo ">> DRY RUN -- TRANSFER not confirmed. Skipping Pass D."
+    echo ">> All modules are already migrated. To apply param/version changes,"
+    echo ">> re-run with confirm_release = TRANSFER."
+    exit 0
+  fi
 else
   echo ""
   echo "+======================================================+"
@@ -607,7 +613,7 @@ for domain_module in "${MODULES_TO_DEPLOY[@]}"; do
 
       # Compare resolved params against live params and module version.
       # Prints "no" when nothing changed, "yes (<reason>)" when update is needed.
-      NEEDS_UPDATE=$(python3 - "${RESOLVED}" "${LIVE_PARAMS_FILE}" "${VERSION}" "${LIVE_VERSION}" <<'PYEOF'
+      DEPLOY_NEEDED=$(python3 - "${RESOLVED}" "${LIVE_PARAMS_FILE}" "${VERSION}" "${LIVE_VERSION}" <<'PYEOF'
 import json, sys
 
 resolved_path, live_path, target_ver, live_ver = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
@@ -636,7 +642,7 @@ PYEOF
       )
       rm -f "${LIVE_PARAMS_FILE}"
 
-      if [ "${NEEDS_UPDATE}" = "no" ]; then
+      if [ "${DEPLOY_NEEDED}" = "no" ]; then
         echo "  |  [SKIP] No changes detected -- stack is already up to date"
         _mlog "  $(date '+%H:%M:%S')  SKIPPED    ${NEW_STACK}  v${VERSION}  (no param or version changes)"
         DEPLOYED+=("${NEW_STACK}")
@@ -644,7 +650,7 @@ PYEOF
         continue
       fi
 
-      echo "  |  Changes detected: ${NEEDS_UPDATE}"
+      echo "  |  Changes detected: ${DEPLOY_NEEDED}"
       echo "  |  Deploying update..."
       EXTRA_CAPS=""
       if grep -q "Type: AWS::IAM::" "${TEMPLATE}" 2>/dev/null; then
@@ -663,7 +669,7 @@ PYEOF
         --no-fail-on-empty-changeset \
         ${EXTRA_CAPS}
       echo "  |  [OK] ${NEW_STACK} [ModuleVersion=${VERSION}]"
-      _mlog "  $(date '+%H:%M:%S')  UPDATED    ${NEW_STACK}  v${VERSION}  (${NEEDS_UPDATE})"
+      _mlog "  $(date '+%H:%M:%S')  UPDATED    ${NEW_STACK}  v${VERSION}  (${DEPLOY_NEEDED})"
       DEPLOYED+=("${NEW_STACK}")
       echo ""
       continue
