@@ -152,6 +152,13 @@ def main():
                 entry["RouteTableLogicalId"] = rt_ref.value
             if isinstance(cidr, str):
                 entry["DestinationCidrBlock"] = cidr
+        if res.get("Type") == "AWS::S3::BucketPolicy":
+            props = res.get("Properties", {})
+            bucket_ref = props.get("Bucket")
+            # Bucket is typically !Ref <BucketLogicalId>; capture it so Phase 1.5
+            # can delete the pre-existing physical policy before Phase 2 creates it.
+            if isinstance(bucket_ref, CfnTag) and bucket_ref.tag == "!Ref":
+                entry["BucketLogicalId"] = bucket_ref.value
         dropped_actions.append(entry)
 
     # Keep only importable resources.

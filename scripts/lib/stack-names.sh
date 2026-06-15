@@ -309,16 +309,19 @@ cfn_import_then_update() {
   return 0
 }
 
-# Internal: print the actual resource-level failure reasons for a stack.
-# Surfaces the root cause inline instead of telling the operator to run a command.
+# Internal: print the most recent stack events to surface the failure reason.
+# Shows the 10 newest events (reverse-chronological). After a Phase 2 failure
+# the CREATE_FAILED / UPDATE_FAILED events are always within the first 10 entries.
+# The old FAILED-filter approach was unreliable: it missed events when the stack
+# rolled back quickly and the describe call raced the rollback completion.
 _cfn_dump_failures() {
   local stack="$1" region="$2" prefix="${3:-  }"
-  echo "${prefix}---- failed resource events for '${stack}' ----"
+  echo "${prefix}---- recent events for '${stack}' ----"
   aws cloudformation describe-stack-events \
     --stack-name "${stack}" --region "${region}" \
-    --query "StackEvents[?contains(ResourceStatus, 'FAILED')].[LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
-    --output text 2>/dev/null | head -20 | sed "s/^/${prefix}  /"
-  echo "${prefix}-----------------------------------------------"
+    --query "StackEvents[:10].[LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
+    --output text 2>/dev/null | sed "s/^/${prefix}  /"
+  echo "${prefix}--------------------------------------"
 }
 
 # Internal: wait for a change set to reach CREATE_COMPLETE. Returns non-zero on FAILED.
@@ -378,32 +381,55 @@ _cfn_cleanup_conflicts() {
   local actions_file="$1" resources_json="$2" region="$3" prefix="${4:-  }"
   [ -s "${actions_file}" ] || return 0
 
-  # Emit "ROUTE <route_table_physical_id> <cidr>" lines for each dropped route.
-  python3 - "${actions_file}" "${resources_json}" <<'PYEOF' | while read -r kind rt_id cidr; do
+  # Emit cleanup directives for each dropped resource that needs physical cleanup
+  # before Phase 2 can create it fresh:
+  #   ROUTE <route_table_id> <cidr>         -- pre-existing default route
+  #   BUCKETPOLICY <bucket_name> -          -- pre-existing S3 bucket policy
+  python3 - "${actions_file}" "${resources_json}" <<'PYEOF' | while read -r kind phys_id extra; do
 import json, sys
 actions = json.load(open(sys.argv[1]))
 resolved = json.load(open(sys.argv[2]))
-# Map RouteTable logical id -> physical id from the resolved import array.
-rt_phys = {}
+
+# Build logical-id -> physical-id map from the resolved import array.
+phys = {}
 for r in resolved:
-    if r.get("ResourceType") == "AWS::EC2::RouteTable":
-        rid = r.get("ResourceIdentifier", {}).get("RouteTableId")
-        if rid:
-            rt_phys[r["LogicalResourceId"]] = rid
+    rid = r.get("ResourceIdentifier", {})
+    logical = r.get("LogicalResourceId")
+    rtype = r.get("ResourceType", "")
+    if rtype == "AWS::EC2::RouteTable":
+        phys[logical] = rid.get("RouteTableId", "")
+    elif rtype == "AWS::S3::Bucket":
+        phys[logical] = rid.get("BucketName", "")
+
 for a in actions:
-    if a.get("ResourceType") == "AWS::EC2::Route":
-        phys = rt_phys.get(a.get("RouteTableLogicalId"))
+    rtype = a.get("ResourceType")
+    if rtype == "AWS::EC2::Route":
+        rt_logical = a.get("RouteTableLogicalId")
+        rt_phys = phys.get(rt_logical, "")
         cidr = a.get("DestinationCidrBlock", "0.0.0.0/0")
-        if phys:
-            print(f"ROUTE {phys} {cidr}")
+        if rt_phys:
+            print(f"ROUTE {rt_phys} {cidr}")
+    elif rtype == "AWS::S3::BucketPolicy":
+        bucket_logical = a.get("BucketLogicalId")
+        bucket_name = phys.get(bucket_logical, "")
+        if bucket_name:
+            print(f"BUCKETPOLICY {bucket_name} -")
 PYEOF
-    if [ "${kind}" = "ROUTE" ] && [ -n "${rt_id}" ]; then
-      echo "${prefix}Phase 1.5: removing pre-existing route ${cidr} on ${rt_id} (avoids recreate conflict)..."
-      aws ec2 delete-route --route-table-id "${rt_id}" \
-        --destination-cidr-block "${cidr}" --region "${region}" 2>/dev/null \
-        && echo "${prefix}  [OK] stale route removed" \
-        || echo "${prefix}  (no conflicting route present -- nothing to remove)"
-    fi
+    case "${kind}" in
+      ROUTE)
+        echo "${prefix}Phase 1.5: removing pre-existing route ${extra} on ${phys_id} (avoids recreate conflict)..."
+        aws ec2 delete-route --route-table-id "${phys_id}" \
+          --destination-cidr-block "${extra}" --region "${region}" 2>/dev/null \
+          && echo "${prefix}  [OK] stale route removed" \
+          || echo "${prefix}  (no conflicting route present -- nothing to remove)"
+        ;;
+      BUCKETPOLICY)
+        echo "${prefix}Phase 1.5: removing pre-existing bucket policy on '${phys_id}' (avoids recreate conflict)..."
+        aws s3api delete-bucket-policy --bucket "${phys_id}" --region "${region}" 2>/dev/null \
+          && echo "${prefix}  [OK] stale bucket policy removed" \
+          || echo "${prefix}  (no bucket policy present -- nothing to remove)"
+        ;;
+    esac
   done
   return 0
 }
