@@ -65,6 +65,17 @@ fi
 echo "+======================================================+"
 echo ""
 
+# In CI, warn early if TRANSFER was not confirmed so the log is unambiguous.
+if [ "${CI}" = "true" ] && [ "${TRANSFER_CONFIRM:-}" != "TRANSFER" ]; then
+  echo "+======================================================+"
+  echo "|  DRY RUN -- Pass C (ownership transfer) will NOT run "
+  echo "|  confirm_release was not set to TRANSFER             "
+  echo "|  Passes A, 0, and B will complete (read-only checks) "
+  echo "|  No EXISTING stacks will be deleted or transferred   "
+  echo "+======================================================+"
+  echo ""
+fi
+
 pip install pyyaml cfn-lint -q 2>/dev/null || true
 
 # -- Schema validation -------------------------------------------------
