@@ -445,6 +445,22 @@ jobs:
           echo "EXISTING: ${OLD}"
           echo "NEW:      ${NEW}"
           pip install boto3 pyyaml -q
+
+          # Modules with import-config.json are migrated via CFN Resource Import in
+          # stage 2: the EXISTING stack is deleted (DeletionPolicy: Retain keeps AWS
+          # resources) and the NEW stack takes ownership. There is no side-by-side
+          # old stack to compare against -- count as passing automatically.
+          IMPORT_CONFIG="new-structure/modules/${{ matrix.domain }}/${{ matrix.module }}/import-config.json"
+          OLD_STATUS=$(aws cloudformation describe-stacks \
+            --stack-name "${OLD}" --region ${{ env.AWS_REGION }} \
+            --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+          if [ -f "${IMPORT_CONFIG}" ] && [ "${OLD_STATUS}" = "DOES_NOT_EXIST" ]; then
+            echo "[OK] ${OLD} -- migrated via CFN Resource Import"
+            echo "     Stage 2 released the EXISTING stack (resources retained by DeletionPolicy)."
+            echo "     ${NEW} now owns the AWS resources. No side-by-side parity needed."
+            exit 0
+          fi
+
           python3 new-structure/pipeline/validate_parity.py \
             --old-stack "${OLD}" \
             --new-stack "${NEW}" \
@@ -490,6 +506,7 @@ jobs:
           | 5 Subnet CIDRs | All subnet CIDR blocks match (sorted, networking module only) |
 
           If PASS: the new centralized module is functionally equivalent to the old stack.
+          If module used CFN Resource Import: EXISTING stack is gone -- parity auto-passed.
           Stage 4 cutover (delete old stack) is safe to proceed.
           If FAIL: do NOT proceed with cutover. Fix the delta shown in the parity output first.
           SUMMARY_EOF
