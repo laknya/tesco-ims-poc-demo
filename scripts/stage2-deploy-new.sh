@@ -128,15 +128,24 @@ for domain_module in "${MODULES_TO_DEPLOY[@]}"; do
     continue
   fi
 
-  # Check if NEW stack already exists -- idempotent re-run
+  # Check NEW stack status: skip healthy stacks, treat stuck states like
+  # DOES_NOT_EXIST so Pass D can clear and re-import them.
   NEW_STATUS=$(aws cloudformation describe-stacks \
     --stack-name "${NEW_STACK}" --region "${REGION}" \
     --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
 
-  if [ "${NEW_STATUS}" != "DOES_NOT_EXIST" ]; then
-    echo "  ${domain_module}: NEW stack already exists (${NEW_STATUS}) -- skipping resolve"
-    continue
-  fi
+  case "${NEW_STATUS}" in
+    ROLLBACK_COMPLETE|ROLLBACK_FAILED|CREATE_FAILED|UPDATE_ROLLBACK_FAILED|\
+    IMPORT_ROLLBACK_COMPLETE|IMPORT_ROLLBACK_FAILED|DELETE_FAILED)
+      echo "  ${domain_module}: NEW stack stuck in ${NEW_STATUS} -- will clear and re-import in Pass D"
+      ;;
+    DOES_NOT_EXIST)
+      ;;
+    *)
+      echo "  ${domain_module}: NEW stack already exists (${NEW_STATUS}) -- skipping resolve"
+      continue
+      ;;
+  esac
 
   # Resolve parameters first (needed for param-source identifiers)
   python3 new-structure/pipeline/resolve_parameters.py \
@@ -145,14 +154,41 @@ for domain_module in "${MODULES_TO_DEPLOY[@]}"; do
     --module  "${MODULE}" \
     --output  "${RESOLVED}" >/dev/null
 
-  echo "  ${domain_module}: resolving import identifiers from EXISTING stack '${OLD_STACK}'..."
-  python3 new-structure/pipeline/resolve_import.py \
-    --stack-name "${OLD_STACK}" \
-    --config     "${IMPORT_CONFIG}" \
-    --params     "${RESOLVED}" \
-    --region     "${REGION}" \
-    --output     "${IMPORT_FILE}" \
-    --fallback-by-tag
+  # Resolve import IDs from the EXISTING stack if it is still present.
+  # If EXISTING is already gone (re-run after partial failure), fall back to
+  # locating retained resources via CFN tags (same recovery path as stage1).
+  OLD_STATUS=$(aws cloudformation describe-stacks \
+    --stack-name "${OLD_STACK}" --region "${REGION}" \
+    --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+
+  if [ "${OLD_STATUS}" != "DOES_NOT_EXIST" ]; then
+    echo "  ${domain_module}: resolving import identifiers from EXISTING stack '${OLD_STACK}'..."
+    python3 new-structure/pipeline/resolve_import.py \
+      --stack-name "${OLD_STACK}" \
+      --config     "${IMPORT_CONFIG}" \
+      --params     "${RESOLVED}" \
+      --region     "${REGION}" \
+      --output     "${IMPORT_FILE}" \
+      --fallback-by-tag
+  else
+    echo "  ${domain_module}: EXISTING stack gone -- locating retained resources via tags (re-run recovery)..."
+    RESOLVE_STDERR=$(mktemp)
+    python3 new-structure/pipeline/resolve_import.py \
+      --stack-name "${OLD_STACK}" \
+      --config     "${IMPORT_CONFIG}" \
+      --params     "${RESOLVED}" \
+      --region     "${REGION}" \
+      --output     "${IMPORT_FILE}" \
+      --fallback-by-tag \
+      --validate 2>"${RESOLVE_STDERR}" || {
+      cat "${RESOLVE_STDERR}"
+      rm -f "${RESOLVE_STDERR}"
+      echo "  [FAIL] ${domain_module}: cannot locate retained resources -- they may have been deleted."
+      echo "     Run stage1-deploy-existing.sh to re-establish the EXISTING stack, then retry."
+      exit 1
+    }
+    rm -f "${RESOLVE_STDERR}"
+  fi
 
   echo "  [OK] ${domain_module}: import identifiers saved to ${IMPORT_FILE}"
   echo ""
@@ -229,16 +265,29 @@ for domain_module in "${MODULES_TO_DEPLOY[@]}"; do
   echo "  |  Template: ${TEMPLATE}"
 
   # Check whether the new stack already exists (re-run idempotency).
+  # Stuck states (ROLLBACK_COMPLETE etc.) are cleared automatically -- resources
+  # are retained by DeletionPolicy: Retain so re-import can recover them.
   NEW_STATUS=$(aws cloudformation describe-stacks \
     --stack-name "${NEW_STACK}" --region "${REGION}" \
     --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "DOES_NOT_EXIST")
 
-  if [ "${NEW_STATUS}" != "DOES_NOT_EXIST" ]; then
-    echo "  |  [OK] NEW stack already exists (${NEW_STATUS}) -- skipping"
-    DEPLOYED+=("${NEW_STACK}")
-    echo ""
-    continue
-  fi
+  case "${NEW_STATUS}" in
+    ROLLBACK_COMPLETE|ROLLBACK_FAILED|CREATE_FAILED|UPDATE_ROLLBACK_FAILED|\
+    IMPORT_ROLLBACK_COMPLETE|IMPORT_ROLLBACK_FAILED|DELETE_FAILED)
+      echo "  |  [WARN] '${NEW_STACK}' stuck in ${NEW_STATUS}."
+      echo "  |  Clearing stuck stack (DeletionPolicy: Retain preserves AWS resources)..."
+      cfn_delete_stack_robust "${NEW_STACK}" "${REGION}" "  |"
+      echo "  |  [OK] Stuck stack cleared -- proceeding with re-import"
+      ;;
+    DOES_NOT_EXIST)
+      ;;
+    *)
+      echo "  |  [OK] NEW stack already exists (${NEW_STATUS}) -- skipping"
+      DEPLOYED+=("${NEW_STACK}")
+      echo ""
+      continue
+      ;;
+  esac
 
   # Resolve parameters (may already exist from Pass B for import modules)
   if [ ! -f "${RESOLVED}" ]; then
