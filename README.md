@@ -94,8 +94,6 @@ registry entry plus a 4-line delta file.
 
 | | Before | After |
 |---|---|---|
-| Templates | 391 duplicates | 79 unique modules |
-| Parameter entries | ~27,000 (95% identical) | ~400 defaults + small deltas |
 | Update a governance tag | Edit 68 files | Edit 1 line in `_defaults/` |
 | Add a new account | Copy 10+ files, update all defaults | 1 registry entry + 4-line delta |
 | Rotate a KMS key principal | Edit 68 templates | Edit 1 JSON config file |
@@ -273,36 +271,47 @@ find out which environment and OU an account belongs to, then applies all 4 laye
 
 Here is a real example for `sandbox / networking / vpc-baseline`:
 
-Layer 1 -- `_defaults/networking/vpc-baseline.json` (8 values shared by every account):
+Layer 1 -- `_defaults/networking/vpc-baseline.json` (4 values -- only true org-wide constants):
 ```json
 {
   "EnableDnsHostnames": "true",
   "EnableDnsSupport":   "true",
-  "PublicSubnetACidr":  "10.0.1.0/24",
-  "PublicSubnetBCidr":  "10.0.2.0/24",
-  "PrivateSubnetACidr": "10.0.10.0/24",
-  "PrivateSubnetBCidr": "10.0.11.0/24",
   "CostCentre":         "TESCO-IMS-PLATFORM",
   "ManagedBy":          "github-actions"
 }
 ```
 
-Layer 4 -- `accounts/sandbox/networking/vpc-baseline.json` (only what is different for sandbox):
+Layer 4 -- `accounts/sandbox/networking/vpc-baseline.json` (8 values -- all account-specific):
 ```json
 {
-  "AccountId":   "999888777666",
-  "Environment": "dev",
-  "VpcCidr":     "10.99.0.0/16",
-  "VpcName":     "sandbox-vpc"
+  "AccountId":          "999888777666",
+  "Environment":        "dev",
+  "VpcCidr":            "10.99.0.0/16",
+  "VpcName":            "sandbox-vpc",
+  "PublicSubnetACidr":  "10.99.1.0/24",
+  "PublicSubnetBCidr":  "10.99.2.0/24",
+  "PrivateSubnetACidr": "10.99.10.0/24",
+  "PrivateSubnetBCidr": "10.99.11.0/24"
 }
 ```
 
-The resolver merges these and produces a single flat parameters file for
-CloudFormation. For sandbox, that is 12 parameters total with 4 coming from the
-account layer overriding nothing from defaults -- they all just add.
+The resolver merges these and produces a single flat 12-parameter file for
+CloudFormation. Every account declares its own CIDRs explicitly -- no account
+can accidentally inherit another account's subnet ranges.
 
-For `coll-dev` and `coll-ppe` the account delta is 8 lines because they also
-override the subnet CIDRs with their own custom ranges.
+Why CIDRs are NOT in defaults: in a real AWS estate where accounts are connected
+via Transit Gateway or VPC peering, a silent CIDR collision causes routing
+failures that are hard to diagnose. Making CIDRs required in every account delta
+means the pipeline catches a missing CIDR before CloudFormation ever runs.
+
+All four accounts in this POC:
+
+| Account   | VpcCidr        | Public Subnets              | Private Subnets               |
+|-----------|----------------|-----------------------------|-------------------------------|
+| dev       | 10.0.0.0/16    | 10.0.1.0/24, 10.0.2.0/24   | 10.0.10.0/24, 10.0.11.0/24   |
+| sandbox   | 10.99.0.0/16   | 10.99.1.0/24, 10.99.2.0/24 | 10.99.10.0/24, 10.99.11.0/24 |
+| coll-dev  | 10.1.0.0/16    | 10.1.1.0/24, 10.1.2.0/24   | 10.1.10.0/24, 10.1.11.0/24   |
+| coll-ppe  | 10.2.0.0/16    | 10.2.1.0/24, 10.2.2.0/24   | 10.2.10.0/24, 10.2.11.0/24   |
 
 ---
 

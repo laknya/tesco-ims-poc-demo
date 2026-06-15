@@ -491,11 +491,18 @@ for p in params:
       fi
 
       case "${DEP_STATUS}" in
-        CREATE_COMPLETE|UPDATE_COMPLETE|IMPORT_COMPLETE|IMPORT_ROLLBACK_COMPLETE)
+        CREATE_COMPLETE|UPDATE_COMPLETE)
+          # Only UPDATE_COMPLETE / CREATE_COMPLETE guarantee that Outputs are
+          # exported and available for Fn::ImportValue in dependent stacks.
+          # IMPORT_COMPLETE means Phase 1 only -- Phase 2 (which adds Outputs)
+          # has not run yet. Treating IMPORT_COMPLETE as ready caused S3 Phase 1
+          # to fail when KMS/VPC exports were not yet live.
           echo "  |  [OK] '${DEP_STACK}' is ready (${DEP_STATUS}) -- continuing with ${MODULE}"
           break ;;
 
-        ROLLBACK_COMPLETE|ROLLBACK_FAILED|DELETE_COMPLETE|CREATE_FAILED|UPDATE_FAILED|UPDATE_ROLLBACK_FAILED)
+        ROLLBACK_COMPLETE|ROLLBACK_FAILED|DELETE_COMPLETE|CREATE_FAILED|\
+        UPDATE_FAILED|UPDATE_ROLLBACK_COMPLETE|UPDATE_ROLLBACK_FAILED|\
+        IMPORT_ROLLBACK_COMPLETE|IMPORT_ROLLBACK_FAILED)
           echo ""
           echo "  [FAIL] CANCELLED -- dependency '${DEP_STACK}' is in a failed state: ${DEP_STATUS}"
           echo "     '${MODULE}' requires '${DEP_STACK}' to be healthy before it can deploy."
@@ -503,7 +510,11 @@ for p in params:
           echo ""
           exit 1 ;;
 
-        CREATE_IN_PROGRESS|UPDATE_IN_PROGRESS|UPDATE_COMPLETE_CLEANUP_IN_PROGRESS|IMPORT_IN_PROGRESS)
+        CREATE_IN_PROGRESS|UPDATE_IN_PROGRESS|UPDATE_COMPLETE_CLEANUP_IN_PROGRESS|\
+        IMPORT_IN_PROGRESS|IMPORT_COMPLETE)
+          # IMPORT_COMPLETE = Phase 1 done, Phase 2 (UPDATE) not yet started.
+          # Outputs are not exported until Phase 2 finishes at UPDATE_COMPLETE.
+          # Keep waiting.
           SEEN_IN_PROGRESS=true
           if [ "${WAITED}" -ge "${IN_PROGRESS_MAX}" ]; then
             echo ""
