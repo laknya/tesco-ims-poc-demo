@@ -1,6 +1,13 @@
 {
   "migration_type": "import",
   "description": "S3 bucket: only S3Bucket is imported (S3BucketPolicy is not CFN-importable and is created fresh). Bucket name is known from resolved params so no stack lookup is needed.",
+  "phase2_resources": [
+    {
+      "LogicalResourceId": "S3BucketPolicy",
+      "ResourceType": "AWS::S3::BucketPolicy",
+      "reason": "Not CFN-importable. Deleted at Phase 1.5 cleanup, then created fresh by Phase 2 UPDATE. Uses Fn::ImportValue on VpcId so must be recreated after VPC stack exports are live."
+    }
+  ],
   "resources_to_import": [
     {
       "ResourceType": "AWS::S3::Bucket",
