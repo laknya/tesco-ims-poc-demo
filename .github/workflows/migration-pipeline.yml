@@ -46,6 +46,10 @@ on:
         description: "Target account (leave blank for all accounts in registry)"
         required: false
         default: dev
+      confirm_release:
+        description: "Type MIGRATE to confirm you intend to release EXISTING stacks (Pass C). Any other value aborts."
+        required: false
+        default: ""
 
 env:
   AWS_REGION: eu-west-1
@@ -305,6 +309,12 @@ jobs:
 
       - name: "Deploy ${{ matrix.domain }}/${{ matrix.module }} -> ${{ matrix.account }}"
         id: deploy_new_module
+        env:
+          # confirm_release is only set on workflow_dispatch runs where the operator
+          # explicitly typed MIGRATE. On push/PR (CI=true) the environment gate
+          # approval already serves as the governance confirmation -- the script
+          # checks CI=true and skips the interactive prompt automatically.
+          MIGRATE_CONFIRM: ${{ github.event.inputs.confirm_release }}
         run: |
           bash scripts/stage2-deploy-new.sh \
             ${{ matrix.account }} \

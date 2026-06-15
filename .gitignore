@@ -4,6 +4,9 @@
 # Generated files -- recreated from registry at deploy time
 new-structure/config/generated/
 
+# Test files -- local only, not version-controlled
+tests/
+
 # Markdown docs — kept locally, not version-controlled (README.md is the exception)
 *.md
 !README.md

@@ -20,9 +20,11 @@
 #   bash stage2-deploy-new.sh dev networking/vpc-baseline shared-services/s3-bucket
 #     -> deploys only those two modules
 #
-# THREE-PASS MIGRATION FLOW:
-#   Pass A: Pre-flight    -- version check all modules upfront (fail fast)
+# FIVE-PASS MIGRATION FLOW:
+#   Pass A: Pre-flight    -- version check + cfn-lint all modules (no AWS, fail fast)
+#   Pass 0: Safety harden -- add DeletionPolicy: Retain to every EXISTING stack resource
 #   Pass B: Resolve       -- while EXISTING stacks still exist, resolve import IDs
+#   [GATE: type MIGRATE to continue]
 #   Pass C: Release       -- delete ALL EXISTING stacks in reverse order
 #   Pass D: Import/Deploy -- import (or deploy) ALL NEW stacks in forward order
 set -e
@@ -121,6 +123,7 @@ echo ""
 # PASS A: Pre-flight -- version integrity check for ALL modules upfront.
 # Fail fast before touching any AWS resource.
 # ==========================================================================
+
 echo ">> PASS A: Pre-flight -- version integrity check..."
 python3 new-structure/pipeline/check_module_versions.py
 echo ""
@@ -135,6 +138,40 @@ for domain_module in "${MODULES_TO_DEPLOY[@]}"; do
   echo "  [OK] cfn-lint ${domain_module}"
 done
 echo "  [OK] Pre-flight passed for all ${#MODULES_TO_DEPLOY[@]} module(s)"
+echo ""
+
+# ==========================================================================
+# PASS 0: Safety hardening -- add DeletionPolicy: Retain to every resource in
+# every EXISTING stack before any stack is read, modified, or deleted.
+#
+# Without DeletionPolicy: Retain, deleting an EXISTING stack in Pass C would
+# permanently destroy the physical AWS resources (VPCs, KMS keys, S3 buckets).
+# This pass is fully idempotent: if Retain is already present it exits in
+# seconds. It is the first AWS touch in the migration.
+# ==========================================================================
+echo ">> PASS 0: Safety hardening -- ensuring DeletionPolicy: Retain on all EXISTING stacks..."
+echo "   (Idempotent -- safe to re-run. Exits immediately if Retain is already in place.)"
+echo ""
+
+for domain_module in "${MODULES_TO_DEPLOY[@]}"; do
+  DOMAIN="${domain_module%/*}"
+  MODULE="${domain_module#*/}"
+  OLD_STACK=$(cfn_stack_name "EXISTING" "${DOMAIN}" "${MODULE}" "${ACCOUNT}")
+
+  echo "  ${domain_module}: checking '${OLD_STACK}'..."
+  python3 new-structure/pipeline/add_deletion_policy.py \
+    --stack-name "${OLD_STACK}" \
+    --region     "${REGION}" || {
+    echo ""
+    echo "  [FAIL] ${domain_module}: safety hardening failed for '${OLD_STACK}'."
+    echo "         Fix the error above and re-run. Migration aborted."
+    exit 1
+  }
+done
+
+echo ""
+echo ">> PASS 0 complete. All EXISTING stacks have DeletionPolicy: Retain on every resource."
+echo "   Resources are safe -- deleting an EXISTING stack in Pass C will NOT destroy AWS resources."
 echo ""
 
 # ==========================================================================
@@ -316,6 +353,66 @@ done
 
 echo ">> PASS B complete."
 echo ""
+
+# ==========================================================================
+# CONFIRMATION GATE -- between Pass B and Pass C.
+#
+# Pass C deletes ALL EXISTING stacks. This is the real point of no return.
+# Physical resources are retained (DeletionPolicy: Retain) but CloudFormation
+# ownership is released. Rollback is still possible via stage5 but requires
+# re-importing retained resources.
+#
+# Local runs:  require typed "MIGRATE" before proceeding.
+# CI runs:     the environment gate approval on the deploy job substitutes.
+#              Set CI=true (GitHub Actions does this automatically) to skip
+#              the interactive prompt.
+# ==========================================================================
+echo ""
+echo "+======================================================+"
+echo "|  READY TO RELEASE EXISTING STACKS                    "
+echo "|                                                      "
+echo "|  Pass B is complete. All resource mappings captured. "
+echo "|  Migration log: ${MIGRATION_LOG}"
+echo "|                                                      "
+echo "|  Pass C will DELETE the following EXISTING stacks:   "
+for dm in "${MODULES_TO_DEPLOY[@]}"; do
+  OLD=$(cfn_stack_name "EXISTING" "${dm%/*}" "${dm#*/}" "${ACCOUNT}")
+  echo "|    ${OLD}"
+done
+echo "|                                                      "
+echo "|  AWS resources are RETAINED (DeletionPolicy: Retain) "
+echo "|  Rollback via stage5-rollback.sh is still possible.  "
+echo "+======================================================+"
+echo ""
+
+if [ "${CI}" = "true" ]; then
+  # In CI, GitHub Actions sets CI=true automatically.
+  # The environment gate approval on the deploy-new job is the governance layer.
+  # On workflow_dispatch runs, MIGRATE_CONFIRM may also be set -- log it either way.
+  if [ "${MIGRATE_CONFIRM:-}" = "MIGRATE" ]; then
+    echo ">> CI mode -- operator confirmed with MIGRATE input. Proceeding with Pass C."
+  else
+    echo ">> CI mode -- environment gate approval is the confirmation. Proceeding with Pass C."
+  fi
+else
+  read -r -p ">> Type MIGRATE to release EXISTING stacks and proceed, or anything else to cancel: " _MIGRATE_CONFIRM
+  if [ "${_MIGRATE_CONFIRM}" != "MIGRATE" ]; then
+    echo ""
+    echo ">> Migration cancelled. EXISTING stacks untouched."
+    echo ">> Re-run when ready. Pass B output is in: ${MIGRATION_LOG}"
+    exit 0
+  fi
+  echo ""
+fi
+
+_mlog ""
+_mlog "CONFIRMATION GATE"
+_mlog "  $(date '+%Y-%m-%d %H:%M:%S UTC')  Proceeding with Pass C (release EXISTING stacks)"
+if [ "${CI}" = "true" ]; then
+  _mlog "  Mode: CI -- environment gate${MIGRATE_CONFIRM:+ + MIGRATE input}"
+else
+  _mlog "  Mode: interactive -- operator typed MIGRATE"
+fi
 
 # ==========================================================================
 # PASS C: Release -- delete ALL EXISTING stacks in REVERSE discovery order.
