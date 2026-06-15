@@ -1,6 +1,18 @@
 {
   "migration_type": "import",
   "description": "VPC baseline: 9 EC2 resources imported from the EXISTING stack. AWS::EC2::Route and AWS::EC2::VPCGatewayAttachment are NOT CFN-importable (AttachmentType is a readOnlyProperty with an opaque internal value). Both are handled via Option A: retained on EXISTING with DeletionPolicy: Retain, omitted from NEW template. Physical IDs are resolved via describe-stack-resource before the EXISTING stack is deleted.",
+  "option_a_resources": [
+    {
+      "LogicalResourceId": "GatewayAttachment",
+      "ResourceType": "AWS::EC2::VPCGatewayAttachment",
+      "reason": "AttachmentType is a readOnlyProperty -- AWS never exposes its value via any API, so the import identifier cannot be discovered. Retained in AWS, unmanaged by any stack."
+    },
+    {
+      "LogicalResourceId": "PublicRoute",
+      "ResourceType": "AWS::EC2::Route",
+      "reason": "Not CFN-importable. Recreating even briefly drops internet connectivity. Retained in AWS, unmanaged by any stack."
+    }
+  ],
   "resources_to_import": [
     {
       "ResourceType": "AWS::EC2::VPC",

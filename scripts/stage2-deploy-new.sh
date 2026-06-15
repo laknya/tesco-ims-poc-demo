@@ -36,6 +36,18 @@ REGION="eu-west-1"
 # shellcheck source=scripts/lib/stack-names.sh
 source "$(dirname "$0")/lib/stack-names.sh"
 
+# -- Migration log setup ---------------------------------------------------
+# Creates logs/migration-{account}-{date}-{time}.log in the repo root.
+# All log writes are fire-and-forget (|| true) so a logging failure never
+# aborts the migration itself.
+mkdir -p logs
+MIGRATION_LOG="logs/migration-${ACCOUNT}-$(date '+%Y%m%d-%H%M%S').log"
+MIGRATION_START_EPOCH=$(date +%s)
+
+_mlog() {
+  echo "$@" >> "${MIGRATION_LOG}" 2>/dev/null || true
+}
+
 echo ""
 echo "+======================================================+"
 echo "|  STAGE 2 -- Deploy NEW centralized modules            "
@@ -83,6 +95,27 @@ for dm in "${MODULES_TO_DEPLOY[@]}"; do
   echo "    ${dm}"
 done
 echo ""
+
+# Write log header now that we know which modules are in scope
+{
+  echo "========================================================"
+  echo "TESCO IMS MIGRATION LOG"
+  echo "========================================================"
+  echo "Account  : ${ACCOUNT}"
+  echo "Region   : ${REGION}"
+  echo "Started  : $(date '+%Y-%m-%d %H:%M:%S UTC')"
+  echo "Script   : stage2-deploy-new.sh"
+  echo ""
+  echo "Modules queued (${#MODULES_TO_DEPLOY[@]}):"
+  for dm in "${MODULES_TO_DEPLOY[@]}"; do
+    echo "  ${dm}"
+  done
+  echo ""
+  echo "========================================================"
+  echo "PASS B -- RESOURCE MAPPING"
+  echo "Captured from EXISTING stacks before ownership transfer."
+  echo "========================================================"
+} >> "${MIGRATION_LOG}" 2>/dev/null || true
 
 # ==========================================================================
 # PASS A: Pre-flight -- version integrity check for ALL modules upfront.
@@ -191,6 +224,93 @@ for domain_module in "${MODULES_TO_DEPLOY[@]}"; do
   fi
 
   echo "  [OK] ${domain_module}: import identifiers saved to ${IMPORT_FILE}"
+
+  # Write the full resource mapping to the migration log.
+  # This is the key record: what physical ID maps to what logical ID BEFORE
+  # the EXISTING stack is deleted and ownership moves to the NEW stack.
+  {
+    echo ""
+    echo "--- ${domain_module} ---"
+    echo "  EXISTING stack : ${OLD_STACK}  (status: ${OLD_STATUS})"
+    echo "  NEW stack      : ${NEW_STACK}  (to be created)"
+    echo "  Resolved params: ${RESOLVED}"
+    echo "  Import IDs file: ${IMPORT_FILE}"
+    echo ""
+
+    # Section 1: resolved parameter values from the 4-layer config system
+    echo "  Resolved parameters (4-layer config merge):"
+    printf "  %-44s  %s\n" "Parameter" "Value"
+    printf "  %s\n" "--------------------------------------------  -----------------------------------------------"
+    python3 -c "
+import json
+try:
+    params = json.load(open('${RESOLVED}'))
+    for p in params:
+        k = p.get('ParameterKey', '')
+        v = p.get('ParameterValue', '')
+        print('  {:<44}  {}'.format(k, v))
+except Exception as e:
+    print('  [could not parse params file: ' + str(e) + ']')
+"
+    echo ""
+
+    # Section 2: physical resource IDs captured from the EXISTING stack --
+    # the exact mapping that CFN Resource Import will use
+    echo "  Physical resource mapping (captured from EXISTING stack before release):"
+    printf "  %-40s  %-44s  %s\n" "Logical ID" "Resource Type" "Physical ID"
+    printf "  %s\n" "----------------------------------------  --------------------------------------------  ----------------------------------------"
+    python3 -c "
+import json
+try:
+    data = json.load(open('${IMPORT_FILE}'))
+    for r in data:
+        lid   = r.get('LogicalResourceId', '')
+        rtype = r.get('ResourceType', '')
+        phys  = list(r.get('ResourceIdentifier', {}).values())
+        phys_str = ', '.join(str(v) for v in phys) if phys else 'n/a'
+        print('  {:<40}  {:<44}  {}'.format(lid, rtype, phys_str))
+except Exception as e:
+    print('  [could not parse import file: ' + str(e) + ']')
+"
+    echo ""
+
+    # Section 3: Option A -- permanently unmanaged (retained in AWS, no stack owns them)
+    echo "  Option A resources (retained in AWS forever, not owned by any CFN stack):"
+    python3 -c "
+import json
+try:
+    cfg = json.load(open('${IMPORT_CONFIG}'))
+    option_a = cfg.get('option_a_resources', [])
+    if option_a:
+        for r in option_a:
+            print('    {:<40}  {:<44}'.format(r.get('LogicalResourceId',''), r.get('ResourceType','')))
+            print('      Reason: ' + r.get('reason','n/a'))
+    else:
+        print('    (none)')
+except Exception as e:
+    print('    [could not parse: ' + str(e) + ']')
+"
+    echo ""
+
+    # Section 4: Phase 2 fresh creates -- deleted at Phase 1.5, recreated by Phase 2
+    echo "  Phase 2 recreate resources (not importable -- deleted at 1.5, created fresh at Phase 2):"
+    python3 -c "
+import json
+try:
+    cfg = json.load(open('${IMPORT_CONFIG}'))
+    phase2 = cfg.get('phase2_resources', [])
+    if phase2:
+        for r in phase2:
+            print('    {:<40}  {:<44}'.format(r.get('LogicalResourceId',''), r.get('ResourceType','')))
+            print('      Reason: ' + r.get('reason','n/a'))
+    else:
+        print('    (none)')
+except Exception as e:
+    print('    [could not parse: ' + str(e) + ']')
+"
+    echo ""
+  } >> "${MIGRATION_LOG}" 2>/dev/null || true
+
   echo ""
 done
 
@@ -206,6 +326,14 @@ echo ""
 # ==========================================================================
 echo ">> PASS C: Release -- deleting EXISTING stacks (reverse order)..."
 echo ""
+
+{
+  echo "========================================================"
+  echo "PASS C -- OWNERSHIP RELEASE"
+  echo "Deleting EXISTING stacks. DeletionPolicy: Retain keeps"
+  echo "all AWS resources alive throughout."
+  echo "========================================================"
+} >> "${MIGRATION_LOG}" 2>/dev/null || true
 
 # Collect modules in reverse order for deletion
 REVERSE_MODULES=()
@@ -228,7 +356,9 @@ for domain_module in "${REVERSE_MODULES[@]}"; do
   fi
 
   echo "  ${domain_module}: releasing '${OLD_STACK}' (DeletionPolicy: Retain preserves resources)..."
+  _mlog "  $(date '+%H:%M:%S')  RELEASING  ${OLD_STACK}"
   cfn_delete_stack_robust "${OLD_STACK}" "${REGION}" "  |"
+  _mlog "  $(date '+%H:%M:%S')  RELEASED   ${OLD_STACK}  (AWS resources retained)"
   echo "  [OK] ${domain_module}: EXISTING stack released"
   echo ""
 done
@@ -245,6 +375,15 @@ echo ""
 # ==========================================================================
 echo ">> PASS D: Import/Deploy -- creating NEW stacks..."
 echo ""
+
+{
+  echo ""
+  echo "========================================================"
+  echo "PASS D -- CFN IMPORT / DEPLOY"
+  echo "Creating NEW stacks. Resources imported from retained"
+  echo "AWS infrastructure (not recreated)."
+  echo "========================================================"
+} >> "${MIGRATION_LOG}" 2>/dev/null || true
 
 DEPLOYED=()
 
@@ -443,6 +582,7 @@ for p in params:
     fi
 
     echo "     [OK] ${NEW_STACK} [ModuleVersion=${VERSION}]"
+    _mlog "  $(date '+%H:%M:%S')  IMPORTED   ${NEW_STACK}  v${VERSION}  (two-phase CFN import)"
 
   else
     # Deploy path: no import-config.json, or no pre-resolved import file.
@@ -460,6 +600,7 @@ for p in params:
       --no-fail-on-empty-changeset \
       ${EXTRA_CAPS}
     echo "     [OK] ${NEW_STACK}  [ModuleVersion=${VERSION}]"
+    _mlog "  $(date '+%H:%M:%S')  DEPLOYED   ${NEW_STACK}  v${VERSION}  (fresh deploy, no import)"
   fi
 
   DEPLOYED+=("${NEW_STACK}")
@@ -479,3 +620,31 @@ for S in "${DEPLOYED[@]}"; do
 done
 echo ""
 echo "  Run scripts/stage3-validate-parity.sh ${ACCOUNT} next."
+
+# Write migration log footer
+{
+  MIGRATION_END_EPOCH=$(date +%s)
+  MIGRATION_DURATION=$(( MIGRATION_END_EPOCH - MIGRATION_START_EPOCH ))
+  echo ""
+  echo "========================================================"
+  echo "MIGRATION COMPLETE"
+  echo "========================================================"
+  echo "Account  : ${ACCOUNT}"
+  echo "Finished : $(date '+%Y-%m-%d %H:%M:%S UTC')"
+  echo "Duration : ${MIGRATION_DURATION}s"
+  echo "Modules  : ${#DEPLOYED[@]} deployed"
+  echo ""
+  echo "Final stack status:"
+  for S in "${DEPLOYED[@]}"; do
+    STATUS=$(aws cloudformation describe-stacks \
+      --stack-name "${S}" --region "${REGION}" \
+      --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "NOT_FOUND")
+    printf "  %-56s  %s\n" "${S}" "${STATUS}"
+  done
+  echo ""
+  echo "Next step: scripts/stage3-validate-parity.sh ${ACCOUNT}"
+  echo "========================================================"
+} >> "${MIGRATION_LOG}" 2>/dev/null || true
+
+echo ""
+echo "  Migration log: ${MIGRATION_LOG}"
