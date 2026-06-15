@@ -1,0 +1,142 @@
+name: TESCO IMS -- Demo Setup: Simulate Existing Structure
+
+# -- DEMO SETUP PIPELINE -------------------------------------------------------
+#
+#  PURPOSE: Run this BEFORE the demo to create the "old" per-account stacks.
+#  This simulates the legacy state: each account has its own copy of every
+#  template with hardcoded values -- the BEFORE picture.
+#
+#  After this pipeline completes, the CloudFormation console will show the
+#  old-style stacks (poc-EXISTING-*-dev). Presenters can walk through the
+#  duplication problem, then run the Migration Pipeline to show the fix.
+#
+#  FLOW:
+#    [GATE: tesco-ims-deploy-existing]
+#      +->> deploy-existing  (stage 1 -- deploys all modules for target account)
+#
+#  This workflow is completely independent from migration-pipeline.yml.
+#  It never touches the new-structure modules or parameters.
+#
+# ------------------------------------------------------------------------------
+
+on:
+  workflow_dispatch:
+    inputs:
+      account:
+        description: "Target account to simulate existing structure for"
+        required: false
+        default: dev
+        type: choice
+        options: [dev]
+      dry_run:
+        description: "'true' prints stacks that would be deployed without deploying"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+
+env:
+  AWS_REGION: eu-west-1
+
+permissions:
+  id-token: write
+  contents: read
+  deployments: write
+
+jobs:
+
+  # ----------------------------------------------------------------------
+  # Deploy EXISTING per-account structure -- GATE: tesco-ims-deploy-existing
+  #
+  #  Runs stage1-deploy-existing.sh which auto-discovers every module
+  #  under existing-structure/{account}/ using the naming convention:
+  #    {domain}__{module}-template.yaml
+  #  Adding a new module requires only two files -- no pipeline changes needed.
+  # ----------------------------------------------------------------------
+  deploy-existing:
+    name: "Deploy EXISTING -- ${{ inputs.account }} (stage 1)"
+    runs-on: ubuntu-latest
+    environment:
+      name: tesco-ims-deploy-existing
+      url: >-
+        https://eu-west-1.console.aws.amazon.com/cloudformation/home?region=eu-west-1#/stacks
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/tesco-ims-migration-deploy-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: "Dry run -- list stacks that would be deployed"
+        if: inputs.dry_run == 'true'
+        run: |
+          source scripts/lib/stack-names.sh
+          ACCOUNT="${{ inputs.account }}"
+          echo ""
+          echo "+===============================================+"
+          echo "|  DRY RUN -- stacks that would be deployed     "
+          echo "|  Account : ${ACCOUNT}                         "
+          echo "+===============================================+"
+          echo ""
+          while IFS= read -r dm; do
+            STACK=$(cfn_stack_name "EXISTING" "${dm%/*}" "${dm#*/}" "${ACCOUNT}")
+            echo "  ${STACK}"
+          done < <(discover_existing_modules "${ACCOUNT}")
+          echo ""
+          echo "  Rerun with dry_run=false to deploy."
+
+      - name: "Deploy existing per-account structure -- ${{ inputs.account }} (all modules)"
+        if: inputs.dry_run != 'true'
+        run: bash scripts/stage1-deploy-existing.sh ${{ inputs.account }}
+
+      - name: Write job summary
+        if: always()
+        run: |
+          STATUS="${{ job.status }}"
+          DRY_RUN="${{ inputs.dry_run }}"
+          ACCOUNT="${{ inputs.account }}"
+          REGION="${{ env.AWS_REGION }}"
+          if [ "${STATUS}" = "success" ]; then RESULT="PASS"; else RESULT="FAIL"; fi
+
+          {
+            if [ "${DRY_RUN}" = "true" ]; then
+              echo "## Demo Setup -- Simulate Existing -- DRY RUN"
+              echo ""
+              echo "No stacks were deployed. Rerun with dry_run=false to deploy."
+            else
+              echo "## Demo Setup -- Simulate Existing -- ${RESULT}"
+            fi
+            echo ""
+            echo "| Setting | Value |"
+            echo "|---------|-------|"
+            echo "| Account | ${ACCOUNT} |"
+            echo "| Region | ${REGION} |"
+            echo "| Dry run | ${DRY_RUN} |"
+            echo "| Job status | ${STATUS} |"
+            echo ""
+
+            if [ "${DRY_RUN}" != "true" ] && [ "${STATUS}" = "success" ]; then
+              source scripts/lib/stack-names.sh
+              echo "**Stacks deployed (old per-account structure -- auto-discovered):**"
+              echo ""
+              echo "| Stack | Module |"
+              echo "|-------|--------|"
+              while IFS= read -r dm; do
+                STACK=$(cfn_stack_name "EXISTING" "${dm%/*}" "${dm#*/}" "${ACCOUNT}")
+                echo "| ${STACK} | ${dm} |"
+              done < <(discover_existing_modules "${ACCOUNT}" 2>/dev/null || true)
+              echo ""
+              echo "**This is the BEFORE picture.**"
+              echo ""
+              echo "Each stack has its own copy of every template with hardcoded values."
+              echo "This is what 68+ per-account templates looks like in CloudFormation."
+              echo ""
+              echo "Run the **Migration Pipeline** next to show the transformation:"
+              echo "  - One master template replaces all per-account copies"
+              echo "  - 4-layer parameter inheritance eliminates duplication"
+              echo "  - Adding a new account = 1 registry entry + 4-line delta"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
