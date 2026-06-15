@@ -527,15 +527,68 @@ for domain_module in "${MODULES_TO_DEPLOY[@]}"; do
     DOES_NOT_EXIST)
       ;;
     *)
-      echo "  |  [OK] NEW stack exists (${NEW_STATUS}) -- refreshing parameters..."
-      # Stack is healthy. Re-resolve parameters and deploy so that config changes
-      # (e.g. a tag value updated in _defaults/) are pushed to the live stack.
-      # --no-fail-on-empty-changeset makes this a no-op when nothing changed.
+      echo "  |  [OK] NEW stack exists (${NEW_STATUS}) -- checking for changes..."
+
+      # Resolve fresh parameters before comparing.
       if [ ! -f "${RESOLVED}" ]; then
         python3 new-structure/pipeline/resolve_parameters.py \
           --account "${ACCOUNT}" --domain "${DOMAIN}" --module "${MODULE}" \
           --output  "${RESOLVED}"
       fi
+
+      # Fetch live stack parameters and deployed version tag.
+      LIVE_PARAMS_FILE="/tmp/tesco-live-params-${ACCOUNT}-${DOMAIN}-${MODULE}.json"
+      aws cloudformation describe-stacks \
+        --stack-name "${NEW_STACK}" --region "${REGION}" \
+        --query 'Stacks[0].Parameters' --output json 2>/dev/null \
+        > "${LIVE_PARAMS_FILE}" || echo "[]" > "${LIVE_PARAMS_FILE}"
+
+      LIVE_VERSION=$(aws cloudformation describe-stacks \
+        --stack-name "${NEW_STACK}" --region "${REGION}" \
+        --query 'Stacks[0].Tags[?Key==`ModuleVersion`].Value | [0]' \
+        --output text 2>/dev/null || echo "")
+
+      # Compare resolved params against live params and module version.
+      # Prints "no" when nothing changed, "yes (<reason>)" when update is needed.
+      NEEDS_UPDATE=$(python3 - "${RESOLVED}" "${LIVE_PARAMS_FILE}" "${VERSION}" "${LIVE_VERSION}" <<'PYEOF'
+import json, sys
+
+resolved_path, live_path, target_ver, live_ver = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+
+resolved = {p['ParameterKey']: p['ParameterValue'] for p in json.load(open(resolved_path))}
+try:
+    raw = json.load(open(live_path))
+    live = {p['ParameterKey']: p['ParameterValue'] for p in (raw or [])}
+except Exception:
+    print("yes (could not read live params)")
+    sys.exit(0)
+
+param_diff = sorted(k for k in set(list(resolved) + list(live)) if resolved.get(k) != live.get(k))
+ver_diff   = target_ver.strip() != live_ver.strip()
+
+if not param_diff and not ver_diff:
+    print("no")
+else:
+    reasons = []
+    if param_diff:
+        reasons.append(f"params: {', '.join(param_diff)}")
+    if ver_diff:
+        reasons.append(f"version: {live_ver.strip() or 'none'} -> {target_ver.strip()}")
+    print("yes (" + "; ".join(reasons) + ")")
+PYEOF
+      )
+      rm -f "${LIVE_PARAMS_FILE}"
+
+      if [ "${NEEDS_UPDATE}" = "no" ]; then
+        echo "  |  [SKIP] No changes detected -- stack is already up to date"
+        _mlog "  $(date '+%H:%M:%S')  SKIPPED    ${NEW_STACK}  v${VERSION}  (no param or version changes)"
+        DEPLOYED+=("${NEW_STACK}")
+        echo ""
+        continue
+      fi
+
+      echo "  |  Changes detected: ${NEEDS_UPDATE}"
+      echo "  |  Deploying update..."
       EXTRA_CAPS=""
       if grep -q "Type: AWS::IAM::" "${TEMPLATE}" 2>/dev/null; then
         EXTRA_CAPS="--capabilities CAPABILITY_NAMED_IAM"
@@ -553,7 +606,7 @@ for domain_module in "${MODULES_TO_DEPLOY[@]}"; do
         --no-fail-on-empty-changeset \
         ${EXTRA_CAPS}
       echo "  |  [OK] ${NEW_STACK} [ModuleVersion=${VERSION}]"
-      _mlog "  $(date '+%H:%M:%S')  UPDATED    ${NEW_STACK}  v${VERSION}  (param refresh, stack already existed)"
+      _mlog "  $(date '+%H:%M:%S')  UPDATED    ${NEW_STACK}  v${VERSION}  (${NEEDS_UPDATE})"
       DEPLOYED+=("${NEW_STACK}")
       echo ""
       continue
