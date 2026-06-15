@@ -89,7 +89,7 @@ jobs:
       deploy_matrix: ${{ steps.build-matrix.outputs.deploy_matrix }}
       has_modules:   ${{ steps.build-matrix.outputs.has_modules }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install tools
         run: pip install pyyaml
@@ -190,13 +190,13 @@ jobs:
       matrix: ${{ fromJSON(needs.validate-inputs.outputs.deploy_matrix) }}
       fail-fast: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install tools
         run: pip install cfn-lint boto3 pyyaml
 
       - name: Configure AWS via OIDC
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/tesco-ims-migration-deploy-role
           aws-region: ${{ env.AWS_REGION }}
@@ -286,13 +286,13 @@ jobs:
       url: >-
         https://eu-west-1.console.aws.amazon.com/cloudformation/home?region=eu-west-1#/stacks
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install tools
         run: pip install cfn-lint boto3 pyyaml
 
       - name: Configure AWS via OIDC
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/tesco-ims-migration-deploy-role
           aws-region: ${{ env.AWS_REGION }}

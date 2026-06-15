@@ -527,7 +527,33 @@ for domain_module in "${MODULES_TO_DEPLOY[@]}"; do
     DOES_NOT_EXIST)
       ;;
     *)
-      echo "  |  [OK] NEW stack already exists (${NEW_STATUS}) -- skipping"
+      echo "  |  [OK] NEW stack exists (${NEW_STATUS}) -- refreshing parameters..."
+      # Stack is healthy. Re-resolve parameters and deploy so that config changes
+      # (e.g. a tag value updated in _defaults/) are pushed to the live stack.
+      # --no-fail-on-empty-changeset makes this a no-op when nothing changed.
+      if [ ! -f "${RESOLVED}" ]; then
+        python3 new-structure/pipeline/resolve_parameters.py \
+          --account "${ACCOUNT}" --domain "${DOMAIN}" --module "${MODULE}" \
+          --output  "${RESOLVED}"
+      fi
+      EXTRA_CAPS=""
+      if grep -q "Type: AWS::IAM::" "${TEMPLATE}" 2>/dev/null; then
+        EXTRA_CAPS="--capabilities CAPABILITY_NAMED_IAM"
+      fi
+      # shellcheck disable=SC2086
+      aws cloudformation deploy \
+        --stack-name        "${NEW_STACK}" \
+        --template-file     "${TEMPLATE}" \
+        --parameter-overrides "file://${RESOLVED}" \
+        --tags POCStage=new Account="${ACCOUNT}" \
+               Domain="${DOMAIN}" Module="${MODULE}" \
+               ModuleVersion="${VERSION}" ModuleType="${TYPE}" \
+               Repo=tesco-ims-poc-demo \
+        --region "${REGION}" \
+        --no-fail-on-empty-changeset \
+        ${EXTRA_CAPS}
+      echo "  |  [OK] ${NEW_STACK} [ModuleVersion=${VERSION}]"
+      _mlog "  $(date '+%H:%M:%S')  UPDATED    ${NEW_STACK}  v${VERSION}  (param refresh, stack already existed)"
       DEPLOYED+=("${NEW_STACK}")
       echo ""
       continue
