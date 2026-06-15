@@ -308,7 +308,7 @@ jobs:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/tesco-ims-migration-deploy-role
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: "${{ github.event.inputs.confirm_release == 'TRANSFER' && format('Deploy {0}/{1} -> {2}', matrix.domain, matrix.module, matrix.account) || format('DRY RUN (no TRANSFER) -- {0}/{1} -> {2}', matrix.domain, matrix.module, matrix.account) }}"
+      - name: "${{ github.event.inputs.confirm_release == 'TRANSFER' && format('Migrate + Deploy -- {0}/{1} -> {2}', matrix.domain, matrix.module, matrix.account) || format('Auto Deploy (param/version update, no EXISTING deletion) -- {0}/{1} -> {2}', matrix.domain, matrix.module, matrix.account) }}"
         id: deploy_new_module
         env:
           # TRANSFER_CONFIRM must equal "TRANSFER" for Pass C to proceed.
