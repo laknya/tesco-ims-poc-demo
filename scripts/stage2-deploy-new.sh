@@ -65,16 +65,16 @@ fi
 echo "+======================================================+"
 echo ""
 
-# In CI, warn early if TRANSFER was not confirmed so the log is unambiguous.
-# Note: this only affects modules that need EXISTING stack deletion (MIGRATE track).
-# Modules whose NEW stacks are already healthy (UPDATE track) will still have
-# param/version changes deployed via Pass D smart-check regardless.
+# In CI, flag early that Pass C (EXISTING stack deletion) is protected.
+# UPDATE-track modules (NEW stack already healthy) still deploy via Pass D.
+# MIGRATE-track modules (NEW stack absent/stuck) exit at the TRANSFER gate below.
 if [ "${CI}" = "true" ] && [ "${TRANSFER_CONFIRM:-}" != "TRANSFER" ]; then
   echo "+======================================================+"
-  echo "|  TRANSFER not confirmed -- Pass C will NOT run       "
-  echo "|  confirm_release was not set to TRANSFER             "
-  echo "|  Modules needing EXISTING deletion: DRY RUN only     "
-  echo "|  Modules already migrated: Pass D smart-check runs   "
+  echo "|  AUTO DEPLOY MODE                                    "
+  echo "|  Pass C (EXISTING stack deletion) is PROTECTED       "
+  echo "|  Already-migrated modules: param/version update runs "
+  echo "|  Modules needing fresh migration: set TRANSFER to    "
+  echo "|  confirm EXISTING stack deletion and proceed         "
   echo "+======================================================+"
   echo ""
 fi
@@ -457,8 +457,8 @@ else
     if [ "${TRANSFER_CONFIRM:-}" = "TRANSFER" ]; then
       echo ">> CI mode -- TRANSFER confirmed. Proceeding with Pass C."
     else
-      echo ">> Aborted -- set confirm_release = TRANSFER in the workflow dispatch to proceed."
-      echo ">> EXISTING stacks are untouched. Re-run when ready."
+      echo ">> Migration blocked -- EXISTING stack deletion requires confirm_release = TRANSFER."
+      echo ">> EXISTING stacks are untouched. Re-run with TRANSFER when ready to migrate."
       exit 0
     fi
   else
